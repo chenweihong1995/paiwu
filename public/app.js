@@ -536,14 +536,45 @@ function selectBacktestedPlan(backtest, count, fixedCombo = null) {
   return plan;
 }
 
-function buildDailyOverview(draws, lottery) {
+function createAlignedWidePlan(backtest, corePlan, count, requiredPicks) {
+  const picks = corePlan.picks.map((core, position) => {
+    const selected = new Set([...core, ...(requiredPicks[position] || [])]);
+    corePlan.rankings[position].forEach((digit) => {
+      if (selected.size < count) selected.add(digit);
+    });
+    return [...selected].slice(0, count).sort((a, b) => a - b);
+  });
+  const split = corePlan.trainSize;
+  const rows = backtest.records.map((record) => picks.map((list, position) => list.includes(record.actual[position])));
+  const validation = rows.slice(split);
+  return {
+    ...corePlan,
+    picks,
+    trainRate: rows.slice(0, split).filter((hits) => hits.every(Boolean)).length / split,
+    validationHits: validation.filter((hits) => hits.every(Boolean)).length,
+    validationRate: validation.length ? validation.filter((hits) => hits.every(Boolean)).length / validation.length : 0,
+    validationPositionRates: picks.map((_, position) => validation.length
+      ? validation.filter((hits) => hits[position]).length / validation.length : 0),
+    baseline: Math.pow(count / 10, backtest.positionCount),
+    alignedWithPl5: true
+  };
+}
+
+function pl5FrontWidePicks(draws) {
+  const backtest = createBacktest(draws, 'pl5');
+  const narrowPlan = selectBacktestedPlan(backtest, 2);
+  return selectBacktestedPlan(backtest, 3, narrowPlan.combo).picks.slice(0, 3);
+}
+
+function buildDailyOverview(draws, lottery, requiredWidePicks = []) {
   const isPl3 = lottery === 'pl3';
   const names = isPl3 ? ['百位', '十位', '个位'] : ['万位', '千位', '百位', '十位', '个位'];
   const wideCount = isPl3 ? 6 : 3;
   const narrowCount = isPl3 ? 3 : 2;
   const backtest = createBacktest(draws, lottery);
   const narrowPlan = selectBacktestedPlan(backtest, narrowCount);
-  const widePlan = selectBacktestedPlan(backtest, wideCount, narrowPlan.combo);
+  let widePlan = selectBacktestedPlan(backtest, wideCount, narrowPlan.combo);
+  if (isPl3 && requiredWidePicks.length) widePlan = createAlignedWidePlan(backtest, narrowPlan, wideCount, requiredWidePicks);
   overviewRecommendations[lottery].wide = widePlan.picks;
   overviewRecommendations[lottery].narrow = narrowPlan.picks;
   const aggregate = Array.from({ length: 10 }, (_, digit) => ({
@@ -556,13 +587,15 @@ function buildDailyOverview(draws, lottery) {
   $('#daily-narrow-title').textContent = `${narrowCount}码直选复式`;
   $('#daily-six').textContent = widePlan.picks.map((list) => list.join('')).join('-');
   $('#daily-three').textContent = narrowPlan.picks.map((list) => list.join('')).join('-');
-  $('#daily-six-note').textContent = `留出验证整注覆盖 ${(widePlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(widePlan.baseline * 100).toFixed(1)}%`;
+  $('#daily-six-note').textContent = `留出验证整注覆盖 ${(widePlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(widePlan.baseline * 100).toFixed(1)}%${widePlan.alignedWithPl5 ? ' · 已包含排五前三位3码' : ''}`;
   $('#daily-three-note').textContent = `留出验证整注覆盖 ${(narrowPlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(narrowPlan.baseline * 100).toFixed(1)}%`;
   $('#daily-six-meta').textContent = `${widePlan.validationHits}/${widePlan.validationSize}期 · ${wideBets * 2}元`;
   $('#daily-three-meta').textContent = `${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${narrowBets * 2}元`;
   $('#algorithm-summary').textContent = `最近${backtest.records.length}期步进回测：前${narrowPlan.trainSize}期按分位命中率选模，后${narrowPlan.validationSize}期仅验证`;
   $('#algorithm-three-models').textContent = `${narrowCount}码：${names.map((name, position) => `${name.slice(0, 1)}${narrowPlan.modelNames[position]}`).join(' / ')}`;
-  $('#algorithm-six-models').textContent = `${wideCount}码：${names.map((name, position) => `${name.slice(0, 1)}${widePlan.modelNames[position]}`).join(' / ')}`;
+  $('#algorithm-six-models').textContent = widePlan.alignedWithPl5
+    ? '6码：排三3码核心 + 排五前三位3码 + 同模型补足'
+    : `${wideCount}码：${names.map((name, position) => `${name.slice(0, 1)}${widePlan.modelNames[position]}`).join(' / ')}`;
 
   if (isPl3) {
     const group3 = aggregate.slice(0, 2).map((item) => item.digit);
@@ -698,7 +731,8 @@ function renderOverview() {
   $('#overview-lottery-badge').textContent = lotteryName();
   $('#overview-date').textContent = `${new Date().toISOString().slice(0, 10)} · 数据更新至${activeLatest.issue}期 · 每日方案已固定`;
   $('#open-pl3-route').textContent = state.lottery === 'pl3' ? '查看012直选图' : '查看012走势图';
-  buildDailyOverview(activeDraws, state.lottery);
+  const requiredWidePicks = state.lottery === 'pl3' ? pl5FrontWidePicks(pl5) : [];
+  buildDailyOverview(activeDraws, state.lottery, requiredWidePicks);
   if (state.lottery === 'pl3') renderPl3OverviewFocus(pl3, pl5);
   else renderPl5OverviewFocus(pl5);
 }
