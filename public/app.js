@@ -7,6 +7,11 @@ const trendModes = [
   ['prime', '质合走势', '质'], ['updown', '升平降走势', '升'], ['max', '最大号走势', '高'],
   ['min', '最小号走势', '低'], ['sequence', '连号走势', '连'], ['amplitude', '振幅走势', '振']
 ];
+const selectorState = {
+  mode: 'compound',
+  picks: Array.from({ length: 5 }, () => new Set()),
+  locked: Array(5).fill(false)
+};
 
 const $ = (selector) => document.querySelector(selector);
 const digits = (draw) => String(draw.winnum).replace(/\s/g, '').padStart(5, '0').split('').map(Number);
@@ -252,6 +257,139 @@ function renderHistory(query = '') {
   }).join('');
 }
 
+function sortedPicks(position) {
+  return [...selectorState.picks[position]].sort((a, b) => a - b);
+}
+
+function selectorTotals() {
+  const counts = selectorState.picks.map((pick) => pick.size);
+  const complete = counts.every(Boolean);
+  const hasDan = selectorState.locked.some(Boolean);
+  const validDan = selectorState.locked.every((locked, index) => !locked || counts[index] === 1);
+  const valid = complete && (selectorState.mode !== 'dantuo' || (hasDan && validDan));
+  return { counts, complete, hasDan, validDan, valid, bets: valid ? counts.reduce((total, count) => total * count, 1) : 0 };
+}
+
+function ticketCombinations(limit = 200) {
+  const totals = selectorTotals();
+  if (!totals.valid) return [];
+  const lists = selectorState.picks.map((_, index) => sortedPicks(index));
+  const combinations = [];
+  const visit = (position, number) => {
+    if (combinations.length >= limit) return;
+    if (position === lists.length) {
+      combinations.push(number);
+      return;
+    }
+    lists[position].forEach((digit) => visit(position + 1, `${number}${digit}`));
+  };
+  visit(0, '');
+  return combinations;
+}
+
+function normalizedMultiple() {
+  const input = $('#ticket-multiple');
+  const value = Math.min(999, Math.max(1, Math.floor(Number(input.value) || 1)));
+  input.value = value;
+  return value;
+}
+
+function updateTicketCalculator() {
+  const totals = selectorTotals();
+  const multiple = normalizedMultiple();
+  const budgetInput = $('#ticket-budget');
+  const budget = Math.max(0, Math.floor(Number(budgetInput.value) || 0));
+  const cost = totals.bets * 2 * multiple;
+  const notation = selectorState.picks.map((_, index) => sortedPicks(index).join('')).join('-');
+  const combinations = ticketCombinations();
+
+  $('#calc-bets').textContent = `${totals.bets.toLocaleString()}注`;
+  $('#calc-cost').textContent = `${cost.toLocaleString()}元`;
+  $('#calc-probability').textContent = `${(totals.bets / 1000).toFixed(totals.bets ? 3 : 0)}%`;
+  $('#calc-prize').textContent = `${(100000 * multiple).toLocaleString()}元`;
+  $('#budget-hint').textContent = `当前预算最多可买${Math.floor(budget / (2 * multiple)).toLocaleString()}注（${multiple}倍）`;
+  $('#ticket-notation').textContent = totals.complete ? notation : '--';
+  $('#preview-summary').textContent = totals.valid
+    ? `共${totals.bets.toLocaleString()}注，${totals.bets > combinations.length ? `显示前${combinations.length}注` : '已全部展开'}`
+    : '请为五个位置选择号码';
+  $('#combination-list').innerHTML = combinations.length
+    ? combinations.map((number) => `<span class="combination-number">${number}</span>`).join('')
+    : '<span class="combination-empty">完成选号后，这里会展开每一注单式号码。</span>';
+
+  let warning = '每注2元，倍数只放大金额和返奖，不提高单注概率。';
+  if (!totals.complete) warning = '五个位置都至少需要选1个号码。';
+  else if (selectorState.mode === 'dantuo' && !totals.hasDan) warning = '定位胆拖至少需要锁定1个位置作为胆码。';
+  else if (cost > budget) warning = `当前金额超出预算${(cost - budget).toLocaleString()}元，可减少号码或倍数。`;
+  else if (totals.valid) warning = `预算剩余${(budget - cost).toLocaleString()}元；理论概率仅按覆盖${totals.bets.toLocaleString()}个五位数计算。`;
+  $('#selector-warning').textContent = warning;
+  $('#copy-ticket').disabled = !totals.valid;
+}
+
+function renderSelector() {
+  document.querySelectorAll('.mode-button').forEach((button) => button.classList.toggle('active', button.dataset.pickMode === selectorState.mode));
+  $('#position-selector').innerHTML = positionNames.map((name, position) => {
+    const selected = selectorState.picks[position];
+    const locked = selectorState.locked[position];
+    const label = selectorState.mode === 'dantuo' ? (locked ? `胆码 · ${selected.size}个` : `拖码 · ${selected.size}个`) : `已选 ${selected.size}个`;
+    return `<article class="position-pick">
+      <header><strong>${name}</strong><button class="lock-button ${locked ? 'active' : ''}" data-lock-position="${position}" title="${locked ? '取消胆码' : '设为胆码'}" ${selectorState.mode === 'dantuo' ? '' : 'disabled'}>D</button></header>
+      <div class="digit-grid">${Array.from({ length: 10 }, (_, digit) => `<button class="digit-button ${selected.has(digit) ? 'selected' : ''}" data-position="${position}" data-digit="${digit}" aria-pressed="${selected.has(digit)}">${digit}</button>`).join('')}</div>
+      <div class="position-count">${label}</div>
+    </article>`;
+  }).join('');
+  updateTicketCalculator();
+}
+
+function setSelectorMode(mode) {
+  selectorState.mode = mode;
+  if (mode !== 'dantuo') selectorState.locked.fill(false);
+  if (mode === 'single') {
+    selectorState.picks.forEach((pick, index) => {
+      const first = sortedPicks(index)[0];
+      selectorState.picks[index] = new Set(first === undefined ? [] : [first]);
+    });
+  }
+  if (mode === 'dantuo' && !selectorState.locked.some(Boolean)) {
+    selectorState.locked[0] = true;
+    const first = sortedPicks(0)[0];
+    selectorState.picks[0] = new Set(first === undefined ? [] : [first]);
+  }
+  renderSelector();
+}
+
+function randomDigits(count) {
+  const pool = Array.from({ length: 10 }, (_, digit) => digit);
+  for (let index = pool.length - 1; index > 0; index--) {
+    const target = Math.floor(Math.random() * (index + 1));
+    [pool[index], pool[target]] = [pool[target], pool[index]];
+  }
+  return pool.slice(0, count);
+}
+
+function randomSelectorPick() {
+  if (selectorState.mode === 'dantuo' && !selectorState.locked.some(Boolean)) selectorState.locked[0] = true;
+  selectorState.picks = selectorState.picks.map((_, position) => {
+    const count = selectorState.mode === 'single' || selectorState.locked[position] ? 1 : 2;
+    return new Set(randomDigits(count));
+  });
+  renderSelector();
+  toast('已生成一组随机号码');
+}
+
+function copyTicketNotation() {
+  const totals = selectorTotals();
+  if (!totals.valid) return;
+  const notation = selectorState.picks.map((_, index) => sortedPicks(index).join('')).join('-');
+  const text = `排列五 ${notation} ${normalizedMultiple()}倍，共${totals.bets}注${totals.bets * 2 * normalizedMultiple()}元`;
+  const fallback = () => {
+    const area = document.createElement('textarea');
+    area.value = text; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove();
+  };
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(fallback);
+  else fallback();
+  toast('投注格式已复制');
+}
+
 function showView(view) {
   state.view = view;
   document.querySelectorAll('.nav-item').forEach((button) => button.classList.toggle('active', button.dataset.view === view));
@@ -262,6 +400,7 @@ function showView(view) {
   $('.summary-strip').style.display = view === 'trend' ? '' : 'none';
   if (view === 'recommend') generateRecommendation();
   if (view === 'history') renderHistory($('#history-search').value.trim());
+  if (view === 'selector') renderSelector();
 }
 
 function toast(message) {
@@ -330,5 +469,40 @@ $('#refresh-button').addEventListener('click', () => loadData(true));
 $('#digits-slider').addEventListener('input', (event) => { $('#digits-output').textContent = event.target.value; });
 $('#generate-button').addEventListener('click', () => { generateRecommendation(); toast('已按当前参数重新计算'); });
 $('#history-search').addEventListener('input', (event) => renderHistory(event.target.value.trim()));
+document.querySelectorAll('.mode-button').forEach((button) => button.addEventListener('click', () => setSelectorMode(button.dataset.pickMode)));
+$('#position-selector').addEventListener('click', (event) => {
+  const digitButton = event.target.closest('[data-digit]');
+  const lockButton = event.target.closest('[data-lock-position]');
+  if (digitButton) {
+    const position = Number(digitButton.dataset.position);
+    const digit = Number(digitButton.dataset.digit);
+    const pick = selectorState.picks[position];
+    if (selectorState.mode === 'single' || selectorState.locked[position]) {
+      selectorState.picks[position] = new Set(pick.has(digit) && pick.size === 1 ? [] : [digit]);
+    } else if (pick.has(digit)) pick.delete(digit);
+    else pick.add(digit);
+    renderSelector();
+  }
+  if (lockButton && selectorState.mode === 'dantuo') {
+    const position = Number(lockButton.dataset.lockPosition);
+    selectorState.locked[position] = !selectorState.locked[position];
+    if (selectorState.locked[position] && selectorState.picks[position].size > 1) {
+      selectorState.picks[position] = new Set([sortedPicks(position)[0]]);
+    }
+    renderSelector();
+  }
+});
+$('#random-pick').addEventListener('click', randomSelectorPick);
+$('#clear-pick').addEventListener('click', () => {
+  selectorState.picks = Array.from({ length: 5 }, () => new Set());
+  renderSelector();
+  toast('已清空选号');
+});
+$('#ticket-multiple').addEventListener('input', updateTicketCalculator);
+$('#ticket-budget').addEventListener('input', updateTicketCalculator);
+$('#minus-multiple').addEventListener('click', () => { $('#ticket-multiple').value = normalizedMultiple() - 1; updateTicketCalculator(); });
+$('#plus-multiple').addEventListener('click', () => { $('#ticket-multiple').value = normalizedMultiple() + 1; updateTicketCalculator(); });
+$('#copy-ticket').addEventListener('click', copyTicketNotation);
 window.addEventListener('resize', drawLines);
+renderSelector();
 loadData();

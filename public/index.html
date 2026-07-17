@@ -16,6 +16,7 @@
     <nav class="topnav" aria-label="主导航">
       <button class="nav-item active" data-view="trend">走势分析</button>
       <button class="nav-item" data-view="recommend">每日推荐</button>
+      <button class="nav-item" data-view="selector">选号工具</button>
       <button class="nav-item" data-view="history">开奖数据</button>
     </nav>
     <div class="latest-mini"><span>最新</span><strong id="latest-number">-----</strong><small id="latest-issue">加载中</small></div>
@@ -92,6 +93,52 @@
       <section id="history-view" class="view-panel">
         <div class="history-head"><h2>开奖数据</h2><input id="history-search" type="search" placeholder="输入期号或号码"></div>
         <div class="history-table-wrap"><table><thead><tr><th>期号</th><th>日期</th><th>开奖号码</th><th>和值</th><th>跨度</th><th>012路</th><th>奇偶比</th><th>大小比</th></tr></thead><tbody id="history-body"></tbody></table></div>
+      </section>
+
+      <section id="selector-view" class="view-panel">
+        <div class="selector-toolbar">
+          <div>
+            <h2>排列五选号工具</h2>
+            <p>按位置生成直选组合，实时计算注数、金额与理论概率</p>
+          </div>
+          <div class="mode-segments" role="group" aria-label="选号方式">
+            <button class="mode-button active" data-pick-mode="compound">直选复式</button>
+            <button class="mode-button" data-pick-mode="single">单式自选</button>
+            <button class="mode-button" data-pick-mode="dantuo">定位胆拖</button>
+          </div>
+          <div class="selector-actions">
+            <button id="random-pick" class="secondary-button">机选</button>
+            <button id="clear-pick" class="secondary-button">清空</button>
+          </div>
+        </div>
+
+        <div class="selector-content">
+          <section class="position-selector" id="position-selector"></section>
+
+          <aside class="ticket-calculator">
+            <h2>投注计算</h2>
+            <label>倍数
+              <div class="stepper"><button id="minus-multiple" aria-label="减少倍数">−</button><input id="ticket-multiple" type="number" min="1" max="999" value="1"><button id="plus-multiple" aria-label="增加倍数">+</button></div>
+            </label>
+            <label>预算上限
+              <div class="money-input"><span>¥</span><input id="ticket-budget" type="number" min="2" step="2" value="100"></div>
+            </label>
+            <div class="budget-hint" id="budget-hint">当前预算最多可买50注</div>
+            <dl class="calc-results">
+              <div><dt>组合注数</dt><dd id="calc-bets">0注</dd></div>
+              <div><dt>投注金额</dt><dd id="calc-cost">0元</dd></div>
+              <div><dt>直选概率</dt><dd id="calc-probability">0%</dd></div>
+              <div><dt>中奖返奖</dt><dd id="calc-prize">100,000元</dd></div>
+            </dl>
+            <button id="copy-ticket" class="primary-button">复制投注格式</button>
+            <p id="selector-warning">每注2元，倍数只放大金额和返奖，不提高中奖概率。</p>
+          </aside>
+        </div>
+
+        <section class="combination-preview">
+          <div class="preview-heading"><div><h2>号码预览</h2><p id="preview-summary">请选择五个位置的号码</p></div><span id="ticket-notation">--</span></div>
+          <div id="combination-list" class="combination-list"></div>
+        </section>
       </section>
     </section>
   </main>
