@@ -1,0 +1,10 @@
+{
+  "name": "pl5-trend-lab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "排列五走势图与每日统计推荐",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  }
+}

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="排列五历史走势、遗漏分析与每日统计推荐">
+  <title>排五研判台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">5</span>
+      <div><strong>排五研判台</strong><small>历史走势与概率分析</small></div>
+    </div>
+    <nav class="topnav" aria-label="主导航">
+      <button class="nav-item active" data-view="trend">走势分析</button>
+      <button class="nav-item" data-view="recommend">每日推荐</button>
+      <button class="nav-item" data-view="history">开奖数据</button>
+    </nav>
+    <div class="latest-mini"><span>最新</span><strong id="latest-number">-----</strong><small id="latest-issue">加载中</small></div>
+  </header>
+
+  <main class="shell">
+    <aside class="sidebar">
+      <div class="side-title">走势分类</div>
+      <div id="trend-menu" class="trend-menu"></div>
+      <div class="side-note">统计只描述历史，不改变每注独立开奖概率。</div>
+    </aside>
+
+    <section class="workspace">
+      <div class="toolbar">
+        <div>
+          <h1 id="view-title">定位走势</h1>
+          <p id="view-subtitle">逐位查看号码分布、连线与当前遗漏</p>
+        </div>
+        <div class="toolbar-actions">
+          <label>期数
+            <select id="period-select">
+              <option value="30">近30期</option>
+              <option value="50" selected>近50期</option>
+              <option value="100">近100期</option>
+              <option value="300">近300期</option>
+              <option value="1000">近1000期</option>
+              <option value="custom">自定义期数</option>
+              <option value="all">全部历史</option>
+            </select>
+          </label>
+          <label id="custom-period-wrap" class="custom-period-wrap">自定义
+            <input id="custom-period" type="number" min="1" step="1" inputmode="numeric" value="1500" aria-label="自定义期数">
+            <button id="apply-period" type="button">应用</button>
+          </label>
+          <button id="line-toggle" class="icon-button active" title="显示或隐藏连线" aria-label="显示或隐藏连线">⌁</button>
+          <button id="refresh-button" class="icon-button" title="刷新开奖数据" aria-label="刷新开奖数据">↻</button>
+        </div>
+      </div>
+
+      <div class="summary-strip" id="summary-strip"></div>
+
+      <section id="trend-view" class="view-panel active">
+        <div class="chart-wrap" id="chart-wrap">
+          <div id="trend-table" class="trend-table"></div>
+          <canvas id="trend-lines" aria-hidden="true"></canvas>
+        </div>
+        <div class="legend"><span><i class="dot hit"></i>开奖号</span><span><i class="dot omit"></i>遗漏值</span><span><i class="line-sample"></i>位置连线</span></div>
+      </section>
+
+      <section id="recommend-view" class="view-panel">
+        <div class="recommend-layout">
+          <section class="recommend-main">
+            <div class="section-heading"><div><h2>今日统计推荐</h2><p id="recommend-date"></p></div><span class="model-badge">每日固定版</span></div>
+            <div class="number-picks" id="number-picks"></div>
+            <div class="ticket-result">
+              <span>直选复式</span><strong id="ticket-code">--</strong>
+              <div><b id="ticket-bets">0注</b><b id="ticket-cost">0元</b><b id="ticket-probability">0%</b></div>
+            </div>
+            <div class="reason-list" id="reason-list"></div>
+          </section>
+          <aside class="model-controls">
+            <h2>模型偏好</h2>
+            <label>每位号码数 <output id="digits-output">2</output><input id="digits-slider" type="range" min="1" max="6" value="2"></label>
+            <label>统计窗口<select id="model-window"><option value="30">近30期</option><option value="60" selected>近60期</option><option value="120">近120期</option><option value="300">近300期</option></select></label>
+            <label>遗漏权重<input id="omit-weight" type="range" min="0" max="100" value="40"></label>
+            <label>近期频次权重<input id="freq-weight" type="range" min="0" max="100" value="35"></label>
+            <label class="switch-row"><span>结构均衡</span><input id="balance-toggle" type="checkbox" checked></label>
+            <button id="generate-button" class="primary-button">重新计算</button>
+            <p>模型按历史遗漏、近期频次和奇偶/大小/012路结构评分。相同注数的理论概率相同。</p>
+          </aside>
+        </div>
+      </section>
+
+      <section id="history-view" class="view-panel">
+        <div class="history-head"><h2>开奖数据</h2><input id="history-search" type="search" placeholder="输入期号或号码"></div>
+        <div class="history-table-wrap"><table><thead><tr><th>期号</th><th>日期</th><th>开奖号码</th><th>和值</th><th>跨度</th><th>012路</th><th>奇偶比</th><th>大小比</th></tr></thead><tbody id="history-body"></tbody></table></div>
+      </section>
+    </section>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
