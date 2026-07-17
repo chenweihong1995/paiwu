@@ -493,15 +493,16 @@ function createBacktest(draws, lottery = state.lottery) {
   return algorithmCaches[lottery];
 }
 
-function selectBacktestedPlan(backtest, count) {
-  if (backtest.plans[count]) return backtest.plans[count];
+function selectBacktestedPlan(backtest, count, fixedCombo = null) {
+  const planKey = fixedCombo ? `${count}:${fixedCombo.join('.')}` : String(count);
+  if (backtest.plans[planKey]) return backtest.plans[planKey];
   const modelCount = modelDefinitions.length;
   const split = Math.max(1, Math.floor(backtest.records.length * .7));
   const hitRows = backtest.records.map((record) => ({
     actual: record.actual,
     hits: record.ranks.map((positionRanks, position) => positionRanks.map((ranking) => ranking.slice(0, count).includes(record.actual[position])))
   }));
-  const bestCombo = Array.from({ length: backtest.positionCount }, (_, position) => {
+  const bestCombo = fixedCombo || Array.from({ length: backtest.positionCount }, (_, position) => {
     let bestModel = modelCount - 1, bestPositionHits = -1;
     for (let model = 0; model < modelCount; model++) {
       const hits = hitRows.slice(0, split).filter((record) => record.hits[position][model]).length;
@@ -531,7 +532,7 @@ function selectBacktestedPlan(backtest, count) {
     validationPositionRates,
     baseline: Math.pow(count / 10, backtest.positionCount)
   };
-  backtest.plans[count] = plan;
+  backtest.plans[planKey] = plan;
   return plan;
 }
 
@@ -542,7 +543,7 @@ function buildDailyOverview(draws, lottery) {
   const narrowCount = isPl3 ? 3 : 2;
   const backtest = createBacktest(draws, lottery);
   const narrowPlan = selectBacktestedPlan(backtest, narrowCount);
-  const widePlan = selectBacktestedPlan(backtest, wideCount);
+  const widePlan = selectBacktestedPlan(backtest, wideCount, narrowPlan.combo);
   overviewRecommendations[lottery].wide = widePlan.picks;
   overviewRecommendations[lottery].narrow = narrowPlan.picks;
   const aggregate = Array.from({ length: 10 }, (_, digit) => ({
