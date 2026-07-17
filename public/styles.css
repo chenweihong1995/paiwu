@@ -208,6 +208,8 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .calc-results dt { color: var(--muted); }
 .calc-results dd { margin: 0; font-weight: 800; }
 .calc-results div:nth-child(2) dd { color: var(--red); }
+.calc-results .model-probability dd { color: var(--teal); }
+#probability-method { padding-top: 10px; border-top: 1px solid var(--line); line-height: 1.55; }
 .ticket-calculator > p { margin-top: 10px; color: var(--muted); font-size: 11px; }
 .filter-panel { display: none; padding: 18px 22px 20px; background: #f4f6f7; border-bottom: 1px solid var(--line); }
 .filter-panel.active { display: block; }

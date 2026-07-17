@@ -980,27 +980,60 @@ function combinationMatches(number) {
   return true;
 }
 
-function ticketCombinations(limit = 200) {
+function selectorProbabilityModel(totals) {
+  if (!totals.valid || !state.draws.length) return null;
+  const averageCount = totals.counts.reduce((total, count) => total + count, 0) / totals.counts.length;
+  const matchedCount = Math.min(6, Math.max(1, Math.round(averageCount)));
+  const plan = selectBacktestedPlan(createBacktest(state.draws, state.lottery), matchedCount);
+  const validationRecords = plan.predictionRecords.slice(plan.trainSize);
+  if (!validationRecords.length) return null;
+  const smoothing = 1;
+  const rankCounts = Array.from({ length: digitCount() }, () => Array(10).fill(smoothing));
+  validationRecords.forEach((record) => record.actual.forEach((digit, position) => {
+    const rank = record.rankings[position].indexOf(digit);
+    if (rank >= 0) rankCounts[position][rank] += 1;
+  }));
+  const denominator = validationRecords.length + smoothing * 10;
+  const rankProbabilities = rankCounts.map((counts) => counts.map((value) => value / denominator));
+  const digitProbabilities = plan.rankings.map((ranking, position) => {
+    const probabilities = Array(10).fill(0);
+    ranking.forEach((digit, rank) => { probabilities[digit] = rankProbabilities[position][rank]; });
+    return probabilities;
+  });
+  return { plan, matchedCount, validationRecords, digitProbabilities };
+}
+
+function ticketCombinations(limit = 200, probabilityModel = null) {
   const totals = selectorTotals();
-  if (!totals.valid) return { items: [], total: 0 };
-  if (selectorState.mode === 'dantuo' && selectorState.generatedTickets.length) {
-    return { items: selectorState.generatedTickets.slice(0, limit), total: selectorState.generatedTickets.length };
-  }
+  if (!totals.valid) return { items: [], total: 0, modelProbability: 0, rankPatterns: null };
   const lists = selectorState.picks.map((_, index) => sortedPicks(index));
   const items = [];
   let total = 0;
+  let modelProbability = 0;
+  const rankPatterns = probabilityModel ? new Set() : null;
+  const accept = (number) => {
+    if (!combinationMatches(number)) return;
+    total += 1;
+    if (items.length < limit) items.push(number);
+    if (!probabilityModel) return;
+    const ds = number.split('').map(Number);
+    modelProbability += ds.reduce((probability, digit, position) =>
+      probability * probabilityModel.digitProbabilities[position][digit], 1);
+    rankPatterns.add(ds.map((digit, position) => probabilityModel.plan.rankings[position].indexOf(digit)).join(','));
+  };
+  if (selectorState.mode === 'dantuo' && selectorState.generatedTickets.length) {
+    selectorState.generatedTickets.forEach(accept);
+    return { items, total, modelProbability: Math.min(1, modelProbability), rankPatterns };
+  }
   const visit = (position, number) => {
     if (position === lists.length) {
-      if (combinationMatches(number)) {
-        total += 1;
-        if (items.length < limit) items.push(number);
-      }
+      accept(number);
       return;
     }
     lists[position].forEach((digit) => visit(position + 1, `${number}${digit}`));
   };
   visit(0, '');
-  return { items, total };
+  return { items, total, modelProbability: Math.min(1, modelProbability), rankPatterns };
 }
 
 function normalizedMultiple() {
@@ -1010,19 +1043,49 @@ function normalizedMultiple() {
   return value;
 }
 
+function formatProbability(probability) {
+  if (!Number.isFinite(probability)) return '--';
+  const percent = Math.min(1, Math.max(0, probability)) * 100;
+  if (percent === 0) return '0%';
+  const precision = percent >= 1 ? 2 : percent >= .01 ? 3 : percent >= .001 ? 4 : 6;
+  return `${percent.toFixed(precision)}%`;
+}
+
+function selectorProbabilitySummary(probabilityModel, combinations) {
+  if (!probabilityModel || !combinations.rankPatterns) return null;
+  const hits = probabilityModel.validationRecords.filter((record) => {
+    const pattern = record.actual.map((digit, position) => record.rankings[position].indexOf(digit)).join(',');
+    return combinations.rankPatterns.has(pattern);
+  }).length;
+  return {
+    hits,
+    total: probabilityModel.validationRecords.length,
+    rate: hits / probabilityModel.validationRecords.length,
+    estimated: combinations.modelProbability
+  };
+}
+
 function updateTicketCalculator() {
   const totals = selectorTotals();
   const multiple = normalizedMultiple();
   const budgetInput = $('#ticket-budget');
   const budget = Math.max(0, Math.floor(Number(budgetInput.value) || 0));
-  const combinations = ticketCombinations();
+  const probabilityModel = selectorProbabilityModel(totals);
+  const combinations = ticketCombinations(200, probabilityModel);
   const bets = combinations.total;
   const cost = bets * 2 * multiple;
+  const theoreticalProbability = bets / (10 ** digitCount());
+  const probabilitySummary = selectorProbabilitySummary(probabilityModel, combinations);
   const notation = selectorState.picks.map((_, index) => sortedPicks(index).join('')).join('-');
 
   $('#calc-bets').textContent = `${bets.toLocaleString()}注`;
   $('#calc-cost').textContent = `${cost.toLocaleString()}元`;
-  $('#calc-probability').textContent = `${(bets / (10 ** digitCount()) * 100).toFixed(bets ? 3 : 0)}%`;
+  $('#calc-probability').textContent = formatProbability(theoreticalProbability);
+  $('#calc-model-probability').textContent = probabilitySummary ? formatProbability(probabilitySummary.estimated) : '--';
+  $('#calc-backtest-probability').textContent = probabilitySummary
+    ? `${probabilitySummary.hits}/${probabilitySummary.total} · ${formatProbability(probabilitySummary.rate)}` : '--';
+  $('#calc-waiting').textContent = theoreticalProbability
+    ? `约${Math.ceil(1 / theoreticalProbability).toLocaleString()}期` : '--';
   $('#calc-prize').textContent = `${((state.lottery === 'pl3' ? 1040 : 100000) * multiple).toLocaleString()}元`;
   $('#budget-hint').textContent = `当前预算最多可买${Math.floor(budget / (2 * multiple)).toLocaleString()}注（${multiple}倍）`;
   const generatedDan = selectorState.mode === 'dantuo' && selectorState.generatedTickets.length;
@@ -1037,6 +1100,9 @@ function updateTicketCalculator() {
   $('#filter-base-bets').textContent = totals.bets.toLocaleString();
   $('#filter-kept-bets').textContent = bets.toLocaleString();
   $('#filter-keep-rate').textContent = totals.bets ? `${(bets / totals.bets * 100).toFixed(2)}%` : '0%';
+  $('#probability-method').textContent = probabilityModel
+    ? `匹配每位约${probabilityModel.matchedCount}码模型，近100期自动权重${Math.round(probabilityModel.plan.recentSignalWeight * 100)}%；算法值按外层${probabilityModel.validationRecords.length}期排名分布和分位独立近似校准，不替代理论命中率。`
+    : '完成复式选号后，系统将结合现有算法给出校准估计。';
 
   let warning = '每注2元，倍数只放大金额和返奖，不提高单注概率。';
   if (selectorState.mode === 'dantuo' && !totals.hasDan) warning = '请先点击某个位置的“设胆”，再选1个胆码。';
@@ -1231,6 +1297,7 @@ async function loadData(refresh = false) {
     $('#latest-number').textContent = digits(latest).join(' ');
     $('#latest-issue').textContent = `${latest.issue}期 · ${latest.kjdate}`;
     renderTrend(); generateRecommendation(); renderOverview();
+    if (state.view === 'selector') renderSelector();
     if (refresh) toast('开奖数据已刷新');
   } catch (error) {
     toast('数据加载失败，请稍后重试');

@@ -142,7 +142,7 @@
         <div class="selector-toolbar">
           <div>
             <h2 id="selector-title">排列五选号工具</h2>
-            <p>按位置生成直选组合，实时计算注数、金额与理论概率</p>
+            <p>按位置生成直选组合，实时计算理论概率、算法估计与留出回测</p>
           </div>
           <div class="mode-segments" role="group" aria-label="选号方式">
             <button class="mode-button active" data-pick-mode="compound">直选复式</button>
@@ -173,10 +173,14 @@
             <dl class="calc-results">
               <div><dt>组合注数</dt><dd id="calc-bets">0注</dd></div>
               <div><dt>投注金额</dt><dd id="calc-cost">0元</dd></div>
-              <div><dt>直选概率</dt><dd id="calc-probability">0%</dd></div>
+              <div><dt>理论命中率</dt><dd id="calc-probability">0%</dd></div>
+              <div class="model-probability"><dt>算法估计值</dt><dd id="calc-model-probability">--</dd></div>
+              <div><dt>留出回测</dt><dd id="calc-backtest-probability">--</dd></div>
+              <div><dt>理论平均间隔</dt><dd id="calc-waiting">--</dd></div>
               <div><dt>中奖返奖</dt><dd id="calc-prize">100,000元</dd></div>
             </dl>
             <button id="copy-ticket" class="primary-button">复制投注格式</button>
+            <p id="probability-method">完成复式选号后，系统将结合现有算法给出校准估计。</p>
             <p id="selector-warning">每注2元，倍数只放大金额和返奖，不提高中奖概率。</p>
           </aside>
         </div>
