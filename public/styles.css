@@ -125,7 +125,7 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .position-pick { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
 .position-pick header { height: 40px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between; background: #f5f7f8; border-bottom: 1px solid var(--line); }
 .position-pick header strong { font-size: 13px; }
-.lock-button { width: 28px; height: 26px; border: 1px solid transparent; background: transparent; color: #929ca4; border-radius: 3px; font-size: 16px; }
+.lock-button { width: 44px; height: 26px; border: 1px solid transparent; background: transparent; color: #6f7b84; border-radius: 3px; font-size: 11px; }
 .lock-button:disabled { visibility: hidden; }
 .lock-button.active { color: var(--gold); border-color: #e3c58f; background: #fff8e9; }
 .digit-grid { padding: 11px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }

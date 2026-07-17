@@ -384,7 +384,7 @@ function renderSelector() {
     const locked = selectorState.locked[position];
     const label = selectorState.mode === 'dantuo' ? (locked ? `胆码 · ${selected.size}个` : `拖码 · ${selected.size}个`) : `${selectorState.mode === 'filter' ? '候选' : '已选'} ${selected.size}个`;
     return `<article class="position-pick">
-      <header><strong>${name}</strong><button class="lock-button ${locked ? 'active' : ''}" data-lock-position="${position}" title="${locked ? '取消胆码' : '设为胆码'}" ${selectorState.mode === 'dantuo' ? '' : 'disabled'}>D</button></header>
+      <header><strong>${name}</strong><button class="lock-button ${locked ? 'active' : ''}" data-lock-position="${position}" title="${locked ? '取消胆码' : '设为胆码'}" ${selectorState.mode === 'dantuo' ? '' : 'disabled'}>${locked ? '胆码' : '设胆'}</button></header>
       <div class="digit-grid">${Array.from({ length: 10 }, (_, digit) => `<button class="digit-button ${selected.has(digit) ? 'selected' : ''}" data-position="${position}" data-digit="${digit}" aria-pressed="${selected.has(digit)}">${digit}</button>`).join('')}</div>
       <div class="position-count">${label}</div>
     </article>`;
