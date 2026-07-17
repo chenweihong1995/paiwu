@@ -331,11 +331,6 @@ function drawLines() {
   ctx.globalAlpha = 1;
 }
 
-function seededNoise(seed) {
-  let x = seed % 2147483647;
-  return () => ((x = x * 16807 % 2147483647) - 1) / 2147483646;
-}
-
 function currentOmission(draws, value, target) {
   for (let index = draws.length - 1, omit = 0; index >= 0; index--, omit++) {
     const result = value(draws[index]);
@@ -479,6 +474,7 @@ function createBacktest(draws, lottery = state.lottery) {
   const records = [];
   for (let end = start; end < series.length; end++) {
     records.push({
+      issue: String(draws[end].issue),
       actual: series[end],
       ranks: Array.from({ length: positionCount }, (_, position) => modelRankingsAt(series, end, position))
     });
@@ -493,88 +489,166 @@ function createBacktest(draws, lottery = state.lottery) {
   return algorithmCaches[lottery];
 }
 
-function selectBacktestedPlan(backtest, count, fixedCombo = null) {
-  const planKey = fixedCombo ? `${count}:${fixedCombo.join('.')}` : String(count);
-  if (backtest.plans[planKey]) return backtest.plans[planKey];
-  const modelCount = modelDefinitions.length;
-  const split = Math.max(1, Math.floor(backtest.records.length * .7));
-  const hitRows = backtest.records.map((record) => ({
-    actual: record.actual,
-    hits: record.ranks.map((positionRanks, position) => positionRanks.map((ranking) => ranking.slice(0, count).includes(record.actual[position])))
-  }));
-  const bestCombo = fixedCombo || Array.from({ length: backtest.positionCount }, (_, position) => {
-    let bestModel = modelCount - 1, bestPositionHits = -1;
-    for (let model = 0; model < modelCount; model++) {
-      const hits = hitRows.slice(0, split).filter((record) => record.hits[position][model]).length;
-      if (hits > bestPositionHits || (hits === bestPositionHits && model === modelCount - 1)) {
-        bestPositionHits = hits;
-        bestModel = model;
-      }
-    }
-    return bestModel;
+function reliabilityWeights(stats, baseline) {
+  return stats.hits.map((hits, model) => {
+    const total = stats.totals[model];
+    const rate = hits / total;
+    const standardError = Math.sqrt(Math.max(baseline * (1 - baseline) / total, .0004));
+    const zScore = Math.max(-2, Math.min(2, (rate - baseline) / standardError));
+    return Math.exp(zScore * .45);
   });
-  const bestHits = hitRows.slice(0, split).filter((record) => bestCombo.every((model, position) => record.hits[position][model])).length;
-  const validation = hitRows.slice(split);
-  const validationHits = validation.filter((record) => bestCombo.every((model, position) => record.hits[position][model])).length;
-  const validationPositionRates = bestCombo.map((model, position) => validation.length
-    ? validation.filter((record) => record.hits[position][model]).length / validation.length : 0);
-  const selectedRankings = bestCombo.map((model, position) => backtest.currentRanks[position][model]);
-  const plan = {
-    combo: bestCombo,
-    modelNames: bestCombo.map((model) => modelDefinitions[model][1]),
-    picks: selectedRankings.map((ranking) => ranking.slice(0, count).sort((a, b) => a - b)),
-    rankings: selectedRankings,
-    trainSize: split,
+}
+
+function combineModelRankings(rankings, weights) {
+  const scores = Array(10).fill(0);
+  rankings.forEach((ranking, model) => ranking.forEach((digit, rank) => {
+    scores[digit] += weights[model] * (10 - rank) / 10;
+  }));
+  return Array.from({ length: 10 }, (_, digit) => digit)
+    .sort((a, b) => scores[b] - scores[a] || a - b);
+}
+
+function planMetrics(predictionRecords, split, positionCount) {
+  const isFullHit = (record) => record.picks.every((list, position) => list.includes(record.actual[position]));
+  const training = predictionRecords.slice(0, split);
+  const validation = predictionRecords.slice(split);
+  const validationHits = validation.filter(isFullHit).length;
+  return {
+    trainRate: training.length ? training.filter(isFullHit).length / training.length : 0,
     validationSize: validation.length,
-    trainRate: bestHits / split,
     validationHits,
     validationRate: validation.length ? validationHits / validation.length : 0,
-    validationPositionRates,
-    baseline: Math.pow(count / 10, backtest.positionCount)
+    validationPositionRates: Array.from({ length: positionCount }, (_, position) => validation.length
+      ? validation.filter((record) => record.picks[position].includes(record.actual[position])).length / validation.length : 0)
+  };
+}
+
+function selectBacktestedPlan(backtest, count) {
+  const planKey = `champion:${count}`;
+  if (backtest.plans[planKey]) return backtest.plans[planKey];
+  const modelCount = modelDefinitions.length;
+  const equalStrategy = modelCount;
+  const strategyCount = modelCount + 2;
+  const baselinePosition = count / 10;
+  const priorStrength = 24;
+  const decay = .99;
+  const stats = Array.from({ length: backtest.positionCount }, () => ({
+    hits: Array(modelCount).fill(priorStrength * baselinePosition),
+    totals: Array(modelCount).fill(priorStrength)
+  }));
+  const strategyRecords = backtest.records.map((record) => {
+    const candidateRankings = record.ranks.map((positionRanks, position) => [
+      ...positionRanks,
+      combineModelRankings(positionRanks, Array(modelCount).fill(1)),
+      combineModelRankings(positionRanks, reliabilityWeights(stats[position], baselinePosition))
+    ]);
+    const strategyRecord = {
+      issue: record.issue,
+      actual: record.actual,
+      candidateRankings
+    };
+    record.ranks.forEach((positionRanks, position) => positionRanks.forEach((ranking, model) => {
+      stats[position].hits[model] = stats[position].hits[model] * decay + (ranking.slice(0, count).includes(record.actual[position]) ? 1 : 0);
+      stats[position].totals[model] = stats[position].totals[model] * decay + 1;
+    }));
+    return strategyRecord;
+  });
+  const split = Math.max(1, Math.floor(strategyRecords.length * .7));
+  const selectedStrategies = Array.from({ length: backtest.positionCount }, (_, position) => {
+    let bestStrategy = 0;
+    let bestHits = -1;
+    for (let strategy = 0; strategy < modelCount; strategy++) {
+      const hits = strategyRecords.slice(0, split).filter((record) =>
+        record.candidateRankings[position][strategy].slice(0, count).includes(record.actual[position])).length;
+      if (hits > bestHits) {
+        bestHits = hits;
+        bestStrategy = strategy;
+      }
+    }
+    const fusionMinimumGain = Math.max(2, Math.ceil(split * .01));
+    for (let strategy = equalStrategy; strategy < strategyCount; strategy++) {
+      const hits = strategyRecords.slice(0, split).filter((record) =>
+        record.candidateRankings[position][strategy].slice(0, count).includes(record.actual[position])).length;
+      if (hits >= bestHits + fusionMinimumGain) {
+        bestHits = hits;
+        bestStrategy = strategy;
+      }
+    }
+    return bestStrategy;
+  });
+  const predictionRecords = strategyRecords.map((record) => {
+    const rankings = selectedStrategies.map((strategy, position) => record.candidateRankings[position][strategy]);
+    return { issue: record.issue, actual: record.actual, rankings, picks: rankings.map((ranking) => ranking.slice(0, count)) };
+  });
+  const finalWeights = stats.map((positionStats) => reliabilityWeights(positionStats, baselinePosition));
+  const dominantModels = finalWeights.map((weights) => weights.indexOf(Math.max(...weights)));
+  const currentCandidates = backtest.currentRanks.map((positionRanks, position) => [
+    ...positionRanks,
+    combineModelRankings(positionRanks, Array(modelCount).fill(1)),
+    combineModelRankings(positionRanks, finalWeights[position])
+  ]);
+  const selectedRankings = selectedStrategies.map((strategy, position) => currentCandidates[position][strategy]);
+  const strategyName = (strategy, position) => strategy < modelCount
+    ? modelDefinitions[strategy][1]
+    : strategy === equalStrategy ? '等权多模型融合' : `在线融合·${modelDefinitions[dominantModels[position]][1]}主导`;
+  const plan = {
+    combo: selectedStrategies,
+    modelNames: selectedStrategies.map(strategyName),
+    picks: selectedRankings.map((ranking) => ranking.slice(0, count).sort((a, b) => a - b)),
+    rankings: selectedRankings,
+    predictionRecords,
+    trainSize: split,
+    ...planMetrics(predictionRecords, split, backtest.positionCount),
+    baseline: Math.pow(count / 10, backtest.positionCount),
+    method: 'champion-ensemble'
   };
   backtest.plans[planKey] = plan;
   return plan;
 }
 
-function createAlignedWidePlan(backtest, corePlan, count, requiredPicks) {
-  const picks = corePlan.picks.map((core, position) => {
+function composeExpandedPicks(corePicks, rankings, count, requiredPicks = []) {
+  return corePicks.map((core, position) => {
     const selected = new Set([...core, ...(requiredPicks[position] || [])]);
-    corePlan.rankings[position].forEach((digit) => {
+    rankings[position].forEach((digit) => {
       if (selected.size < count) selected.add(digit);
     });
     return [...selected].slice(0, count).sort((a, b) => a - b);
   });
-  const split = corePlan.trainSize;
-  const rows = backtest.records.map((record) => picks.map((list, position) => list.includes(record.actual[position])));
-  const validation = rows.slice(split);
+}
+
+function createExpandedPlan(backtest, corePlan, count, requiredPlan = null) {
+  const requiredRecords = new Map((requiredPlan?.predictionRecords || []).map((record) => [record.issue, record]));
+  const predictionRecords = corePlan.predictionRecords.map((record) => {
+    const required = requiredRecords.get(record.issue);
+    return {
+      ...record,
+      picks: composeExpandedPicks(record.picks, record.rankings, count, required?.picks)
+    };
+  });
+  const picks = composeExpandedPicks(corePlan.picks, corePlan.rankings, count, requiredPlan?.picks);
   return {
     ...corePlan,
     picks,
-    trainRate: rows.slice(0, split).filter((hits) => hits.every(Boolean)).length / split,
-    validationHits: validation.filter((hits) => hits.every(Boolean)).length,
-    validationRate: validation.length ? validation.filter((hits) => hits.every(Boolean)).length / validation.length : 0,
-    validationPositionRates: picks.map((_, position) => validation.length
-      ? validation.filter((hits) => hits[position]).length / validation.length : 0),
+    predictionRecords,
+    ...planMetrics(predictionRecords, corePlan.trainSize, backtest.positionCount),
     baseline: Math.pow(count / 10, backtest.positionCount),
-    alignedWithPl5: true
+    alignedWithPl5: Boolean(requiredPlan)
   };
 }
 
-function pl5FrontWidePicks(draws) {
+function pl5FrontWidePlan(draws) {
   const backtest = createBacktest(draws, 'pl5');
-  const narrowPlan = selectBacktestedPlan(backtest, 2);
-  return selectBacktestedPlan(backtest, 3, narrowPlan.combo).picks.slice(0, 3);
+  return createExpandedPlan(backtest, selectBacktestedPlan(backtest, 2), 3);
 }
 
-function buildDailyOverview(draws, lottery, requiredWidePicks = []) {
+function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
   const isPl3 = lottery === 'pl3';
   const names = isPl3 ? ['百位', '十位', '个位'] : ['万位', '千位', '百位', '十位', '个位'];
   const wideCount = isPl3 ? 6 : 3;
   const narrowCount = isPl3 ? 3 : 2;
   const backtest = createBacktest(draws, lottery);
   const narrowPlan = selectBacktestedPlan(backtest, narrowCount);
-  let widePlan = selectBacktestedPlan(backtest, wideCount, narrowPlan.combo);
-  if (isPl3 && requiredWidePicks.length) widePlan = createAlignedWidePlan(backtest, narrowPlan, wideCount, requiredWidePicks);
+  const widePlan = createExpandedPlan(backtest, narrowPlan, wideCount, isPl3 ? requiredWidePlan : null);
   overviewRecommendations[lottery].wide = widePlan.picks;
   overviewRecommendations[lottery].narrow = narrowPlan.picks;
   const aggregate = Array.from({ length: 10 }, (_, digit) => ({
@@ -587,11 +661,11 @@ function buildDailyOverview(draws, lottery, requiredWidePicks = []) {
   $('#daily-narrow-title').textContent = `${narrowCount}码直选复式`;
   $('#daily-six').textContent = widePlan.picks.map((list) => list.join('')).join('-');
   $('#daily-three').textContent = narrowPlan.picks.map((list) => list.join('')).join('-');
-  $('#daily-six-note').textContent = `留出验证整注覆盖 ${(widePlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(widePlan.baseline * 100).toFixed(1)}%${widePlan.alignedWithPl5 ? ' · 已包含排五前三位3码' : ''}`;
-  $('#daily-three-note').textContent = `留出验证整注覆盖 ${(narrowPlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(narrowPlan.baseline * 100).toFixed(1)}%`;
+  $('#daily-six-note').textContent = `逐期样本外覆盖 ${(widePlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(widePlan.baseline * 100).toFixed(1)}%${widePlan.alignedWithPl5 ? ' · 已包含排五前三位3码' : ''}`;
+  $('#daily-three-note').textContent = `逐期样本外覆盖 ${(narrowPlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(narrowPlan.baseline * 100).toFixed(1)}%`;
   $('#daily-six-meta').textContent = `${widePlan.validationHits}/${widePlan.validationSize}期 · ${wideBets * 2}元`;
   $('#daily-three-meta').textContent = `${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${narrowBets * 2}元`;
-  $('#algorithm-summary').textContent = `最近${backtest.records.length}期步进回测：前${narrowPlan.trainSize}期按分位命中率选模，后${narrowPlan.validationSize}期仅验证`;
+  $('#algorithm-summary').textContent = `最近${backtest.records.length}期冠军挑战：前${narrowPlan.trainSize}期比较9个单模与2个融合策略，后${narrowPlan.validationSize}期完全留出验证`;
   $('#algorithm-three-models').textContent = `${narrowCount}码：${names.map((name, position) => `${name.slice(0, 1)}${narrowPlan.modelNames[position]}`).join(' / ')}`;
   $('#algorithm-six-models').textContent = widePlan.alignedWithPl5
     ? '6码：排三3码核心 + 排五前三位3码 + 同模型补足'
@@ -634,10 +708,10 @@ function renderBacktestedRecommendation(count) {
   $('#ticket-bets').textContent = `${bets}注`;
   $('#ticket-cost').textContent = `${bets * 2}元`;
   $('#ticket-probability').textContent = `理论概率 ${(bets / (10 ** names.length) * 100).toFixed(3)}%`;
-  $('#reason-list').innerHTML = names.map((name, position) => `<div class="reason-item"><strong>${name}：${plan.modelNames[position]}</strong><span>最近${plan.validationSize}期留出分位覆盖率 ${(plan.validationPositionRates[position] * 100).toFixed(1)}%，该段未参与选模。</span></div>`).join('');
-  $('#recommend-date').textContent = `滚动回测${plan.trainSize + plan.validationSize}期 · 留出整注覆盖 ${(plan.validationRate * 100).toFixed(1)}% · 理论基线 ${(plan.baseline * 100).toFixed(1)}%`;
-  $('.model-controls h2').textContent = '回测自动选模';
-  $('.model-badge').textContent = '样本外验证版';
+  $('#reason-list').innerHTML = names.map((name, position) => `<div class="reason-item"><strong>${name}：${plan.modelNames[position]}</strong><span>后${plan.validationSize}期完全留出分位覆盖率 ${(plan.validationPositionRates[position] * 100).toFixed(1)}%，该段未参与策略选择。</span></div>`).join('');
+  $('#recommend-date').textContent = `冠军挑战回测${plan.trainSize + plan.validationSize}期 · 留出整注覆盖 ${(plan.validationRate * 100).toFixed(1)}% · 理论基线 ${(plan.baseline * 100).toFixed(1)}%`;
+  $('.model-controls h2').textContent = '冠军挑战集成';
+  $('.model-badge').textContent = '完全留出验证版';
   $('#generate-button').textContent = '重新回测';
   ['model-window', 'omit-weight', 'freq-weight', 'balance-toggle'].forEach((id) => { $(`#${id}`).disabled = true; });
 }
@@ -731,8 +805,8 @@ function renderOverview() {
   $('#overview-lottery-badge').textContent = lotteryName();
   $('#overview-date').textContent = `${new Date().toISOString().slice(0, 10)} · 数据更新至${activeLatest.issue}期 · 每日方案已固定`;
   $('#open-pl3-route').textContent = state.lottery === 'pl3' ? '查看012直选图' : '查看012走势图';
-  const requiredWidePicks = state.lottery === 'pl3' ? pl5FrontWidePicks(pl5) : [];
-  buildDailyOverview(activeDraws, state.lottery, requiredWidePicks);
+  const requiredWidePlan = state.lottery === 'pl3' ? pl5FrontWidePlan(pl5) : null;
+  buildDailyOverview(activeDraws, state.lottery, requiredWidePlan);
   if (state.lottery === 'pl3') renderPl3OverviewFocus(pl3, pl5);
   else renderPl5OverviewFocus(pl5);
 }
@@ -749,56 +823,7 @@ async function loadOverviewData(refresh = false) {
 
 function generateRecommendation() {
   const count = Number($('#digits-slider').value);
-  if (state.lottery === 'pl3' && state.draws.length) {
-    renderBacktestedRecommendation(count);
-    return;
-  }
-  $('.model-controls h2').textContent = '模型偏好';
-  $('.model-badge').textContent = '每日固定版';
-  $('#generate-button').textContent = '重新计算';
-  ['model-window', 'omit-weight', 'freq-weight', 'balance-toggle'].forEach((id) => { $(`#${id}`).disabled = false; });
-  const windowSize = Number($('#model-window').value);
-  const omitWeight = Number($('#omit-weight').value) / 100;
-  const freqWeight = Number($('#freq-weight').value) / 100;
-  const balance = $('#balance-toggle').checked;
-  const sample = state.draws.slice(-windowSize);
-  const today = new Date().toISOString().slice(0, 10);
-  const random = seededNoise(Number(today.replaceAll('-', '')));
-  const picks = [];
-  const reasons = [];
-  for (let p = 0; p < digitCount(); p++) {
-    const frequency = Array(10).fill(0);
-    sample.forEach((draw) => frequency[digits(draw)[p]]++);
-    const omission = Array(10).fill(0);
-    for (let n = 0; n < 10; n++) {
-      const last = [...state.draws].reverse().findIndex((draw) => digits(draw)[p] === n);
-      omission[n] = last < 0 ? state.draws.length : last;
-    }
-    const maxFreq = Math.max(...frequency, 1), maxOmit = Math.max(...omission, 1);
-    const scored = Array.from({ length: 10 }, (_, n) => ({ n, score: (frequency[n] / maxFreq) * freqWeight + (omission[n] / maxOmit) * omitWeight + random() * .08 }));
-    scored.sort((a, b) => b.score - a.score);
-    let chosen = scored.slice(0, count).map((x) => x.n);
-    if (balance && count > 1 && chosen.every((n) => n % 2 === chosen[0] % 2)) {
-      const replacement = scored.find((x) => !chosen.includes(x.n) && x.n % 2 !== chosen[0] % 2);
-      chosen[chosen.length - 1] = replacement.n;
-    }
-    if (balance && count > 1 && chosen.every((n) => (n >= 5) === (chosen[0] >= 5))) {
-      const replacement = scored.find((x) => !chosen.includes(x.n) && (x.n >= 5) !== (chosen[0] >= 5));
-      chosen[chosen.length - 1] = replacement.n;
-    }
-    chosen.sort((a, b) => a - b); picks.push(chosen);
-    const lead = scored[0].n;
-    reasons.push(`<div class="reason-item"><strong>${positionNames[p]}：${chosen.join('、')}</strong><span>${lead}综合分最高；该位当前遗漏${omission[lead]}期，近${windowSize}期出现${frequency[lead]}次。</span></div>`);
-  }
-  $('#number-picks').style.gridTemplateColumns = `repeat(${digitCount()}, minmax(90px, 1fr))`;
-  $('#number-picks').innerHTML = picks.map((list, index) => `<div class="pick-column"><h3>${positionNames[index]}</h3><div class="pick-digits">${list.map((n) => `<span class="pick-digit">${n}</span>`).join('')}</div></div>`).join('');
-  const bets = count ** digitCount();
-  $('#ticket-code').textContent = picks.map((list) => list.join('')).join('-');
-  $('#ticket-bets').textContent = `${bets}注`;
-  $('#ticket-cost').textContent = `${bets * 2}元`;
-  $('#ticket-probability').textContent = `理论概率 ${(bets / (10 ** digitCount()) * 100).toFixed(3)}%`;
-  $('#reason-list').innerHTML = reasons.join('');
-  $('#recommend-date').textContent = `${today} · 基于最新${windowSize}期统计，今日重复计算结果保持一致`;
+  if (state.draws.length) renderBacktestedRecommendation(count);
 }
 
 function renderHistory(query = '') {
