@@ -11,6 +11,7 @@ const selectorState = {
   mode: 'compound',
   picks: Array.from({ length: 5 }, () => new Set()),
   locked: Array(5).fill(false),
+  generatedTickets: [],
   filterInitialized: false,
   filters: {
     oddCounts: new Set(), bigCounts: new Set(), primeCounts: new Set(), distinctCounts: new Set(),
@@ -266,6 +267,12 @@ function sortedPicks(position) {
   return [...selectorState.picks[position]].sort((a, b) => a - b);
 }
 
+function discardGeneratedTickets() {
+  if (!selectorState.generatedTickets.length) return;
+  selectorState.generatedTickets = [];
+  selectorState.picks = selectorState.picks.map((pick, position) => selectorState.locked[position] ? new Set(pick) : new Set());
+}
+
 function selectorTotals() {
   const counts = selectorState.picks.map((pick) => pick.size);
   const complete = counts.every(Boolean);
@@ -315,6 +322,9 @@ function combinationMatches(number) {
 function ticketCombinations(limit = 200) {
   const totals = selectorTotals();
   if (!totals.valid) return { items: [], total: 0 };
+  if (selectorState.mode === 'dantuo' && selectorState.generatedTickets.length) {
+    return { items: selectorState.generatedTickets.slice(0, limit), total: selectorState.generatedTickets.length };
+  }
   const lists = selectorState.picks.map((_, index) => sortedPicks(index));
   const items = [];
   let total = 0;
@@ -354,7 +364,8 @@ function updateTicketCalculator() {
   $('#calc-probability').textContent = `${(bets / 1000).toFixed(bets ? 3 : 0)}%`;
   $('#calc-prize').textContent = `${(100000 * multiple).toLocaleString()}元`;
   $('#budget-hint').textContent = `当前预算最多可买${Math.floor(budget / (2 * multiple)).toLocaleString()}注（${multiple}倍）`;
-  $('#ticket-notation').textContent = totals.complete ? (selectorState.mode === 'filter' ? '条件缩水' : notation) : '--';
+  const generatedDan = selectorState.mode === 'dantuo' && selectorState.generatedTickets.length;
+  $('#ticket-notation').textContent = totals.complete ? (selectorState.mode === 'filter' ? '条件缩水' : generatedDan ? '胆码机选' : notation) : '--';
   $('#preview-summary').textContent = totals.valid
     ? `共${bets.toLocaleString()}注，${bets > combinations.items.length ? `显示前${combinations.items.length}注` : '已全部展开'}`
     : '请为五个位置选择号码';
@@ -371,11 +382,12 @@ function updateTicketCalculator() {
   else if (selectorState.mode === 'dantuo' && !totals.validDan) warning = '每个胆码位置只能选1个号码。';
   else if (selectorState.mode === 'dantuo' && !totals.complete) {
     const emptyPositions = positionNames.filter((_, index) => selectorState.picks[index].size === 0);
-    warning = `胆码已选，请继续选择${emptyPositions.join('、')}的拖码。`;
+    warning = `胆码已选：可直接设置机选注数，或手动选择${emptyPositions.join('、')}的拖码。`;
   }
   else if (!totals.complete) warning = '五个位置都至少需要选1个号码。';
   else if (selectorState.mode === 'filter' && bets === 0) warning = '当前条件互相冲突，筛选结果为0注。';
   else if (cost > budget) warning = `当前金额超出预算${(cost - budget).toLocaleString()}元，可减少号码或倍数。`;
+  else if (generatedDan) warning = `已按胆码生成${bets}注不重复号码；重新手选会清除本次机选结果。`;
   else if (totals.valid) warning = `预算剩余${(budget - cost).toLocaleString()}元；理论概率仅按覆盖${bets.toLocaleString()}个五位数计算。`;
   $('#selector-warning').textContent = warning;
   $('#copy-ticket').disabled = !totals.valid || bets === 0;
@@ -384,6 +396,7 @@ function updateTicketCalculator() {
 function renderSelector() {
   document.querySelectorAll('.mode-button').forEach((button) => button.classList.toggle('active', button.dataset.pickMode === selectorState.mode));
   $('#filter-panel').classList.toggle('active', selectorState.mode === 'filter');
+  $('#random-count-wrap').classList.toggle('show', selectorState.mode === 'dantuo');
   $('#position-selector').innerHTML = positionNames.map((name, position) => {
     const selected = selectorState.picks[position];
     const locked = selectorState.locked[position];
@@ -415,6 +428,7 @@ function renderFilterPanel() {
 }
 
 function setSelectorMode(mode) {
+  if (selectorState.mode !== mode) discardGeneratedTickets();
   selectorState.mode = mode;
   if (mode !== 'dantuo') selectorState.locked.fill(false);
   if (mode === 'filter' && !selectorState.filterInitialized) {
@@ -445,7 +459,10 @@ function randomDigits(count) {
 }
 
 function randomSelectorPick() {
-  if (selectorState.mode === 'dantuo' && !selectorState.locked.some(Boolean)) selectorState.locked[0] = true;
+  if (selectorState.mode === 'dantuo') {
+    generateDanRandomTickets();
+    return;
+  }
   selectorState.picks = selectorState.picks.map((_, position) => {
     const count = selectorState.mode === 'single' || selectorState.locked[position] ? 1 : 2;
     return new Set(randomDigits(count));
@@ -454,14 +471,44 @@ function randomSelectorPick() {
   toast('已生成一组随机号码');
 }
 
+function generateDanRandomTickets() {
+  const danPositions = selectorState.locked.map((locked, index) => locked ? index : -1).filter((index) => index >= 0);
+  if (!danPositions.length) {
+    toast('请先设置至少1个胆码位置');
+    return;
+  }
+  if (danPositions.some((position) => selectorState.picks[position].size !== 1)) {
+    toast('每个胆码位置必须选1个号码');
+    return;
+  }
+  const input = $('#random-ticket-count');
+  const requested = Math.min(500, Math.max(1, Math.floor(Number(input.value) || 1)));
+  const dragPositions = selectorState.locked.map((locked, index) => !locked ? index : -1).filter((index) => index >= 0);
+  const count = Math.min(requested, 10 ** dragPositions.length);
+  input.value = count;
+  const tickets = new Set();
+  while (tickets.size < count) {
+    const number = selectorState.locked.map((locked, position) => locked ? sortedPicks(position)[0] : Math.floor(Math.random() * 10)).join('');
+    tickets.add(number);
+  }
+  selectorState.generatedTickets = [...tickets];
+  selectorState.picks = selectorState.picks.map((pick, position) => selectorState.locked[position]
+    ? new Set(pick)
+    : new Set(selectorState.generatedTickets.map((number) => Number(number[position]))));
+  renderSelector();
+  toast(`已按胆码生成${count}注号码`);
+}
+
 function copyTicketNotation() {
   const totals = selectorTotals();
   if (!totals.valid) return;
   const notation = selectorState.picks.map((_, index) => sortedPicks(index).join('')).join('-');
-  const calculation = ticketCombinations(selectorState.mode === 'filter' ? 100000 : 0);
+  const copyGenerated = selectorState.mode === 'dantuo' && selectorState.generatedTickets.length;
+  const calculation = ticketCombinations(selectorState.mode === 'filter' || copyGenerated ? 100000 : 0);
   if (!calculation.total) return;
-  const filterNumbers = selectorState.mode === 'filter' ? `\n${calculation.items.join(' ')}` : '';
-  const text = `排列五 ${selectorState.mode === 'filter' ? '条件缩水' : notation} ${normalizedMultiple()}倍，共${calculation.total}注${calculation.total * 2 * normalizedMultiple()}元${filterNumbers}`;
+  const listedNumbers = selectorState.mode === 'filter' || copyGenerated ? `\n${calculation.items.join(' ')}` : '';
+  const ticketType = selectorState.mode === 'filter' ? '条件缩水' : copyGenerated ? '胆码机选' : notation;
+  const text = `排列五 ${ticketType} ${normalizedMultiple()}倍，共${calculation.total}注${calculation.total * 2 * normalizedMultiple()}元${listedNumbers}`;
   const fallback = () => {
     const area = document.createElement('textarea');
     area.value = text; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove();
@@ -555,6 +602,7 @@ $('#position-selector').addEventListener('click', (event) => {
   const digitButton = event.target.closest('[data-digit]');
   const lockButton = event.target.closest('[data-lock-position]');
   if (digitButton) {
+    discardGeneratedTickets();
     const position = Number(digitButton.dataset.position);
     const digit = Number(digitButton.dataset.digit);
     const pick = selectorState.picks[position];
@@ -565,6 +613,7 @@ $('#position-selector').addEventListener('click', (event) => {
     renderSelector();
   }
   if (lockButton && selectorState.mode === 'dantuo') {
+    discardGeneratedTickets();
     const position = Number(lockButton.dataset.lockPosition);
     selectorState.locked[position] = !selectorState.locked[position];
     if (selectorState.locked[position] && selectorState.picks[position].size > 1) {
@@ -575,11 +624,16 @@ $('#position-selector').addEventListener('click', (event) => {
 });
 $('#random-pick').addEventListener('click', randomSelectorPick);
 $('#select-all-pick').addEventListener('click', () => {
-  selectorState.picks = Array.from({ length: 5 }, () => new Set(Array.from({ length: 10 }, (_, digit) => digit)));
+  selectorState.generatedTickets = [];
+  const allDigits = Array.from({ length: 10 }, (_, digit) => digit);
+  selectorState.picks = selectorState.picks.map((pick, position) => selectorState.mode === 'dantuo' && selectorState.locked[position]
+    ? new Set(pick)
+    : new Set(allDigits));
   renderSelector();
-  toast('五个位置已全选');
+  toast(selectorState.mode === 'dantuo' ? '拖码位置已全选' : '五个位置已全选');
 });
 $('#clear-pick').addEventListener('click', () => {
+  selectorState.generatedTickets = [];
   selectorState.picks = Array.from({ length: 5 }, () => new Set());
   renderSelector();
   toast('已清空选号');

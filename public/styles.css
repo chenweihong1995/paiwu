@@ -120,6 +120,9 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .mode-button.active { background: #28343e; color: white; }
 .selector-actions { display: flex; gap: 7px; }
 .secondary-button { height: 34px; padding: 0 13px; border: 1px solid #cfd6dc; border-radius: 4px; background: white; color: #43515c; }
+.random-count-wrap { display: none; height: 34px; padding-left: 9px; align-items: center; gap: 5px; border: 1px solid #cfd6dc; border-radius: 4px; background: white; color: #52606b; font-size: 12px; white-space: nowrap; }
+.random-count-wrap.show { display: flex; }
+.random-count-wrap input { width: 48px; height: 30px; padding: 0 4px; border: 0; border-left: 1px solid var(--line); border-right: 1px solid var(--line); text-align: center; outline: 0; }
 .selector-content { display: grid; grid-template-columns: minmax(0, 1fr) 290px; background: white; border-bottom: 1px solid var(--line); }
 .position-selector { padding: 18px 22px; display: grid; grid-template-columns: repeat(5, minmax(132px, 1fr)); gap: 10px; }
 .position-pick { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
