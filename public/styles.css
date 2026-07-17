@@ -68,6 +68,7 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .overview-head p { margin-top: 3px; color: var(--muted); font-size: 12px; }
 .overview-latest { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); border: 1px solid var(--line); background: var(--line); gap: 1px; }
 .overview-latest > div { min-width: 180px; padding: 10px 14px; background: #fafbfb; }
+.overview-latest > div.active { box-shadow: inset 0 3px 0 #f2a33a; background: #fffaf0; }
 .overview-latest span, .overview-latest small { display: block; color: var(--muted); font-size: 10px; }
 .overview-latest strong { display: block; color: var(--red); font-size: 20px; letter-spacing: 4px; }
 .overview-band { padding: 20px 26px 24px; background: #fff; border-bottom: 1px solid var(--line); }
@@ -90,7 +91,7 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .algorithm-audit strong { display: block; color: #2e3d47; font-size: 12px; }
 .algorithm-audit span { color: var(--muted); font-size: 10px; }
 .algorithm-models { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.algorithm-models span { padding-left: 10px; border-left: 1px solid #ccd9d8; line-height: 1.35; }
+.algorithm-models span { padding-left: 10px; border-left: 1px solid #ccd9d8; line-height: 1.35; overflow-wrap: anywhere; }
 .focus-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .focus-group { min-height: 190px; border: 1px solid var(--line); border-radius: 6px; background: #fff; overflow: hidden; }
 .focus-group.wide-focus { grid-column: 1 / -1; min-height: 100px; }

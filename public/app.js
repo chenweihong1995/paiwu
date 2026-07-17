@@ -1,7 +1,7 @@
 const state = { lottery: 'pl5', draws: [], periods: 50, mode: 'position', lines: true, view: 'overview' };
 const overviewData = { pl3: [], pl5: [] };
-const overviewRecommendations = { six: [], three: [] };
-let pl3AlgorithmCache = null;
+const overviewRecommendations = { pl3: { wide: [], narrow: [] }, pl5: { wide: [], narrow: [] } };
+const algorithmCaches = { pl3: null, pl5: null };
 let positionNames = ['万位', '千位', '百位', '十位', '个位'];
 let trendModes = [];
 const baseTrendModes = [
@@ -132,6 +132,7 @@ const routeDigitOrder = ['0', '3', '6', '9', '1', '4', '7', '2', '5', '8'];
 const pl3ShapeMap = { '003': 'A', '012': 'B', '021': 'C', '030': 'D', '102': 'E', '111': 'F', '120': 'G', '201': 'H', '210': 'I', '300': 'J' };
 const pl5Distributions = ['500', '410', '401', '320', '311', '302', '230', '221', '212', '203', '140', '131', '122', '113', '104', '050', '041', '032', '023', '014', '005'];
 const directRoutes = Array.from({ length: 27 }, (_, index) => index.toString(3).padStart(3, '0'));
+const pl5DirectRoutes = Array.from({ length: 243 }, (_, index) => index.toString(3).padStart(5, '0'));
 const isRouteMode = (mode) => mode.startsWith('route-');
 
 function routeCounts(draw, positions) {
@@ -372,7 +373,7 @@ function balancedTop(ranking, count) {
   return [...new Set(chosen)].sort((a, b) => a - b);
 }
 
-const pl3ModelDefinitions = [
+const modelDefinitions = [
   ['hot20', '近20期热度'], ['bayes60', '60期贝叶斯'], ['stable300', '300期稳定频率'],
   ['decay', '指数衰减'], ['transition', '位置转移'], ['hazard', '遗漏危险率'],
   ['structure', '012/奇偶/大小'], ['pattern', '前期形态转移'], ['ensemble', '多模型融合']
@@ -465,40 +466,42 @@ function modelRankingsAt(series, end, position) {
   };
   const ensembleInputs = ['bayes60', 'stable300', 'decay', 'transition', 'hazard', 'structure', 'pattern'];
   scores.ensemble = Array.from({ length: 10 }, (_, digit) => ensembleInputs.reduce((total, model) => total + scores[model][digit], 0) / ensembleInputs.length);
-  return pl3ModelDefinitions.map(([id]) => Array.from({ length: 10 }, (_, digit) => ({ digit, score: scores[id][digit] }))
+  return modelDefinitions.map(([id]) => Array.from({ length: 10 }, (_, digit) => ({ digit, score: scores[id][digit] }))
     .sort((a, b) => b.score - a.score || a.digit - b.digit).map((item) => item.digit));
 }
 
-function createPl3Backtest(draws) {
+function createBacktest(draws, lottery = state.lottery) {
   const signature = `${draws.length}:${draws[draws.length - 1]?.issue || ''}`;
-  if (pl3AlgorithmCache?.signature === signature) return pl3AlgorithmCache;
-  const series = draws.map((draw) => drawDigits(draw, 3));
+  if (algorithmCaches[lottery]?.signature === signature) return algorithmCaches[lottery];
+  const positionCount = lottery === 'pl3' ? 3 : 5;
+  const series = draws.map((draw) => drawDigits(draw, positionCount));
   const start = Math.max(220, series.length - 600);
   const records = [];
   for (let end = start; end < series.length; end++) {
     records.push({
       actual: series[end],
-      ranks: Array.from({ length: 3 }, (_, position) => modelRankingsAt(series, end, position))
+      ranks: Array.from({ length: positionCount }, (_, position) => modelRankingsAt(series, end, position))
     });
   }
-  pl3AlgorithmCache = {
+  algorithmCaches[lottery] = {
     signature,
+    positionCount,
     records,
-    currentRanks: Array.from({ length: 3 }, (_, position) => modelRankingsAt(series, series.length, position)),
+    currentRanks: Array.from({ length: positionCount }, (_, position) => modelRankingsAt(series, series.length, position)),
     plans: {}
   };
-  return pl3AlgorithmCache;
+  return algorithmCaches[lottery];
 }
 
 function selectBacktestedPlan(backtest, count) {
   if (backtest.plans[count]) return backtest.plans[count];
-  const modelCount = pl3ModelDefinitions.length;
+  const modelCount = modelDefinitions.length;
   const split = Math.max(1, Math.floor(backtest.records.length * .7));
   const hitRows = backtest.records.map((record) => ({
     actual: record.actual,
     hits: record.ranks.map((positionRanks, position) => positionRanks.map((ranking) => ranking.slice(0, count).includes(record.actual[position])))
   }));
-  const bestCombo = Array.from({ length: 3 }, (_, position) => {
+  const bestCombo = Array.from({ length: backtest.positionCount }, (_, position) => {
     let bestModel = modelCount - 1, bestPositionHits = -1;
     for (let model = 0; model < modelCount; model++) {
       const hits = hitRows.slice(0, split).filter((record) => record.hits[position][model]).length;
@@ -517,7 +520,7 @@ function selectBacktestedPlan(backtest, count) {
   const selectedRankings = bestCombo.map((model, position) => backtest.currentRanks[position][model]);
   const plan = {
     combo: bestCombo,
-    modelNames: bestCombo.map((model) => pl3ModelDefinitions[model][1]),
+    modelNames: bestCombo.map((model) => modelDefinitions[model][1]),
     picks: selectedRankings.map((ranking) => ranking.slice(0, count).sort((a, b) => a - b)),
     rankings: selectedRankings,
     trainSize: split,
@@ -526,50 +529,77 @@ function selectBacktestedPlan(backtest, count) {
     validationHits,
     validationRate: validation.length ? validationHits / validation.length : 0,
     validationPositionRates,
-    baseline: Math.pow(count / 10, 3)
+    baseline: Math.pow(count / 10, backtest.positionCount)
   };
   backtest.plans[count] = plan;
   return plan;
 }
 
-function buildDailyPl3(draws) {
-  const backtest = createPl3Backtest(draws);
-  const threePlan = selectBacktestedPlan(backtest, 3);
-  const sixPlan = selectBacktestedPlan(backtest, 6);
-  overviewRecommendations.six = sixPlan.picks;
-  overviewRecommendations.three = threePlan.picks;
+function buildDailyOverview(draws, lottery) {
+  const isPl3 = lottery === 'pl3';
+  const names = isPl3 ? ['百位', '十位', '个位'] : ['万位', '千位', '百位', '十位', '个位'];
+  const wideCount = isPl3 ? 6 : 3;
+  const narrowCount = isPl3 ? 3 : 2;
+  const backtest = createBacktest(draws, lottery);
+  const narrowPlan = selectBacktestedPlan(backtest, narrowCount);
+  const widePlan = selectBacktestedPlan(backtest, wideCount);
+  overviewRecommendations[lottery].wide = widePlan.picks;
+  overviewRecommendations[lottery].narrow = narrowPlan.picks;
   const aggregate = Array.from({ length: 10 }, (_, digit) => ({
     digit,
-    score: threePlan.rankings.reduce((total, ranking) => total + (10 - ranking.indexOf(digit)), 0)
+    score: narrowPlan.rankings.reduce((total, ranking) => total + (10 - ranking.indexOf(digit)), 0)
   })).sort((a, b) => b.score - a.score || a.digit - b.digit);
-  const group3 = aggregate.slice(0, 2).map((item) => item.digit);
-  const group6 = balancedTop(aggregate, 6);
-  const [a, b] = group3;
-  $('#daily-six').textContent = sixPlan.picks.map((list) => list.join('')).join('-');
-  $('#daily-three').textContent = threePlan.picks.map((list) => list.join('')).join('-');
-  $('#daily-six-note').textContent = `留出验证整注覆盖 ${(sixPlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(sixPlan.baseline * 100).toFixed(1)}%`;
-  $('#daily-three-note').textContent = `留出验证整注覆盖 ${(threePlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(threePlan.baseline * 100).toFixed(1)}%`;
-  $('#daily-six-meta').textContent = `${sixPlan.validationHits}/${sixPlan.validationSize}期 · 432元`;
-  $('#daily-three-meta').textContent = `${threePlan.validationHits}/${threePlan.validationSize}期 · 54元`;
-  $('#algorithm-summary').textContent = `最近${backtest.records.length}期步进回测：前${threePlan.trainSize}期按分位命中率选模，后${threePlan.validationSize}期仅验证`;
-  $('#algorithm-three-models').textContent = `3码：百${threePlan.modelNames[0]} / 十${threePlan.modelNames[1]} / 个${threePlan.modelNames[2]}`;
-  $('#algorithm-six-models').textContent = `6码：百${sixPlan.modelNames[0]} / 十${sixPlan.modelNames[1]} / 个${sixPlan.modelNames[2]}`;
-  $('#daily-group3').textContent = `${a}${a}${b} / ${a}${b}${b}`;
-  $('#daily-group3-detail').textContent = `${a}${a}${b}、${a}${b}${a}、${b}${a}${a}、${a}${b}${b}、${b}${a}${b}、${b}${b}${a}`;
-  $('#daily-group6').textContent = group6.join(' ');
+  const wideBets = wideCount ** names.length;
+  const narrowBets = narrowCount ** names.length;
+  $('#daily-wide-title').textContent = `${wideCount}码直选复式`;
+  $('#daily-narrow-title').textContent = `${narrowCount}码直选复式`;
+  $('#daily-six').textContent = widePlan.picks.map((list) => list.join('')).join('-');
+  $('#daily-three').textContent = narrowPlan.picks.map((list) => list.join('')).join('-');
+  $('#daily-six-note').textContent = `留出验证整注覆盖 ${(widePlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(widePlan.baseline * 100).toFixed(1)}%`;
+  $('#daily-three-note').textContent = `留出验证整注覆盖 ${(narrowPlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(narrowPlan.baseline * 100).toFixed(1)}%`;
+  $('#daily-six-meta').textContent = `${widePlan.validationHits}/${widePlan.validationSize}期 · ${wideBets * 2}元`;
+  $('#daily-three-meta').textContent = `${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${narrowBets * 2}元`;
+  $('#algorithm-summary').textContent = `最近${backtest.records.length}期步进回测：前${narrowPlan.trainSize}期按分位命中率选模，后${narrowPlan.validationSize}期仅验证`;
+  $('#algorithm-three-models').textContent = `${narrowCount}码：${names.map((name, position) => `${name.slice(0, 1)}${narrowPlan.modelNames[position]}`).join(' / ')}`;
+  $('#algorithm-six-models').textContent = `${wideCount}码：${names.map((name, position) => `${name.slice(0, 1)}${widePlan.modelNames[position]}`).join(' / ')}`;
+
+  if (isPl3) {
+    const group3 = aggregate.slice(0, 2).map((item) => item.digit);
+    const group6 = balancedTop(aggregate, 6);
+    const [a, b] = group3;
+    $('#daily-special-one-title').textContent = '组三参考';
+    $('#daily-special-one-meta').textContent = '2组 · 4元';
+    $('#daily-special-two-title').textContent = '组六6码复式';
+    $('#daily-special-two-meta').textContent = '20注 · 40元';
+    $('#daily-group3').textContent = `${a}${a}${b} / ${a}${b}${b}`;
+    $('#daily-group3-detail').textContent = `${a}${a}${b}、${a}${b}${a}、${b}${a}${a}、${a}${b}${b}、${b}${a}${b}、${b}${b}${a}`;
+    $('#daily-group6').textContent = group6.join(' ');
+    $('#daily-group6-detail').textContent = '6个互异候选号，组合数C(6,3)';
+  } else {
+    const positionLine = narrowPlan.rankings.map((ranking) => ranking[0]);
+    const routeLine = positionLine.map((digit) => digit % 3);
+    $('#daily-special-one-title').textContent = '单码定位参考';
+    $('#daily-special-one-meta').textContent = '1注 · 2元';
+    $('#daily-special-two-title').textContent = '012路定位参考';
+    $('#daily-special-two-meta').textContent = '结构观察';
+    $('#daily-group3').textContent = positionLine.join(' ');
+    $('#daily-group3-detail').textContent = names.map((name, position) => `${name}${positionLine[position]}`).join(' · ');
+    $('#daily-group6').textContent = routeLine.join(' ');
+    $('#daily-group6-detail').textContent = '万、千、百、十、个位依次对应的012路';
+  }
 }
 
 function renderBacktestedRecommendation(count) {
-  const plan = selectBacktestedPlan(createPl3Backtest(state.draws), count);
+  const plan = selectBacktestedPlan(createBacktest(state.draws, state.lottery), count);
   const picks = plan.picks;
-  const names = ['百位', '十位', '个位'];
-  $('#number-picks').style.gridTemplateColumns = 'repeat(3, minmax(90px, 1fr))';
+  const names = positionNames;
+  $('#number-picks').style.gridTemplateColumns = `repeat(${names.length}, minmax(90px, 1fr))`;
   $('#number-picks').innerHTML = picks.map((list, index) => `<div class="pick-column"><h3>${names[index]}</h3><div class="pick-digits">${list.map((number) => `<span class="pick-digit">${number}</span>`).join('')}</div></div>`).join('');
-  const bets = count ** 3;
+  const bets = count ** names.length;
   $('#ticket-code').textContent = picks.map((list) => list.join('')).join('-');
   $('#ticket-bets').textContent = `${bets}注`;
   $('#ticket-cost').textContent = `${bets * 2}元`;
-  $('#ticket-probability').textContent = `理论概率 ${(bets / 10).toFixed(3)}%`;
+  $('#ticket-probability').textContent = `理论概率 ${(bets / (10 ** names.length) * 100).toFixed(3)}%`;
   $('#reason-list').innerHTML = names.map((name, position) => `<div class="reason-item"><strong>${name}：${plan.modelNames[position]}</strong><span>最近${plan.validationSize}期留出分位覆盖率 ${(plan.validationPositionRates[position] * 100).toFixed(1)}%，该段未参与选模。</span></div>`).join('');
   $('#recommend-date').textContent = `滚动回测${plan.trainSize + plan.validationSize}期 · 留出整注覆盖 ${(plan.validationRate * 100).toFixed(1)}% · 理论基线 ${(plan.baseline * 100).toFixed(1)}%`;
   $('.model-controls h2').textContent = '回测自动选模';
@@ -578,28 +608,32 @@ function renderBacktestedRecommendation(count) {
   ['model-window', 'omit-weight', 'freq-weight', 'balance-toggle'].forEach((id) => { $(`#${id}`).disabled = true; });
 }
 
-function renderOverview() {
-  const pl3 = overviewData.pl3;
-  const pl5 = overviewData.pl5;
-  if (!pl3.length || !pl5.length) return;
-  const pl3Latest = pl3[pl3.length - 1];
-  const pl5Latest = pl5[pl5.length - 1];
-  $('#overview-pl3-latest').textContent = drawDigits(pl3Latest, 3).join(' ');
-  $('#overview-pl3-issue').textContent = `${pl3Latest.issue}期 · ${pl3Latest.kjdate}`;
-  $('#overview-pl5-latest').textContent = drawDigits(pl5Latest, 5).join(' ');
-  $('#overview-pl5-issue').textContent = `${pl5Latest.issue}期 · ${pl5Latest.kjdate}`;
-  $('#overview-date').textContent = `${new Date().toISOString().slice(0, 10)} · 数据更新至${pl3Latest.issue}期 · 每日方案已固定`;
-  buildDailyPl3(pl3);
+function pl5WideFocus(draws) {
+  const pl5Distribution = rankedOmissions(draws, pl5Distributions, (draw) => {
+    const ds = drawDigits(draw, 5); return [0, 1, 2].map((route) => ds.filter((digit) => digit % 3 === route).length).join('');
+  }, 5).map((item) => ({ ...item, label: `012比 ${item.label}` }));
+  const pl5Names = ['万位', '千位', '百位', '十位', '个位'];
+  const pl5Positions = pl5Names.map((name, position) => {
+    const item = rankedOmissions(draws, Array.from({ length: 10 }, (_, digit) => digit), (draw) => drawDigits(draw, 5)[position], 1)[0];
+    return { ...item, label: `${name} ${item.label}` };
+  });
+  return [...pl5Distribution, ...pl5Positions];
+}
 
+function renderPl3OverviewFocus(pl3, pl5) {
+  $('#focus-route-title').textContent = '012直选形态';
+  $('#focus-route-meta').textContent = '27种';
+  $('#focus-position-meta').textContent = '百十个';
+  $('#focus-group-title').textContent = '组三组六形态';
+  $('#focus-group-meta').textContent = '组选';
+  $('#focus-wide-title').textContent = '排列五012分布与定位关注';
+  $('#focus-wide-meta').textContent = '同步观察';
   const directFocus = rankedOmissions(pl3, directRoutes, (draw) => drawDigits(draw, 3).map((digit) => digit % 3).join(''), 5)
     .map((item) => ({ ...item, label: `${item.label}路` }));
   $('#focus-route').innerHTML = focusRows(directFocus);
-
-  const pl3Names = ['百位', '十位', '个位'];
-  const positionFocus = pl3Names.flatMap((name, position) => rankedOmissions(pl3, Array.from({ length: 10 }, (_, digit) => digit), (draw) => drawDigits(draw, 3)[position], 2)
-    .map((item) => ({ ...item, label: `${name} ${item.label}` })));
-  $('#focus-position').innerHTML = focusRows(positionFocus);
-
+  const names = ['百位', '十位', '个位'];
+  $('#focus-position').innerHTML = focusRows(names.flatMap((name, position) => rankedOmissions(pl3, Array.from({ length: 10 }, (_, digit) => digit), (draw) => drawDigits(draw, 3)[position], 2)
+    .map((item) => ({ ...item, label: `${name} ${item.label}` }))));
   const oddFocus = rankedOmissions(pl3, patternList(['偶', '奇'], 3), (draw) => drawDigits(draw, 3).map((digit) => digit % 2 ? '奇' : '偶').join(''), 2)
     .map((item) => ({ ...item, label: `奇偶 ${item.label}` }));
   const sizeFocus = rankedOmissions(pl3, patternList(['小', '大'], 3), (draw) => drawDigits(draw, 3).map((digit) => digit >= 5 ? '大' : '小').join(''), 2)
@@ -609,20 +643,63 @@ function renderOverview() {
   const sumFocus = rankedOmissions(pl3, Array.from({ length: 28 }, (_, value) => value), (draw) => sum(drawDigits(draw, 3)), 1).map((item) => ({ ...item, label: `和值 ${item.label}` }));
   const spanFocus = rankedOmissions(pl3, Array.from({ length: 10 }, (_, value) => value), (draw) => { const ds = drawDigits(draw, 3); return Math.max(...ds) - Math.min(...ds); }, 1).map((item) => ({ ...item, label: `跨度 ${item.label}` }));
   $('#focus-structure').innerHTML = focusRows([...oddFocus, ...sizeFocus, ...zoneFocus, ...sumFocus, ...spanFocus]);
-
-  const groupFocus = rankedOmissions(pl3, ['豹子', '组三', '组六'], (draw) => ['','豹子', '组三', '组六'][new Set(drawDigits(draw, 3)).size], 3);
+  const groupFocus = rankedOmissions(pl3, ['豹子', '组三', '组六'], (draw) => ['', '豹子', '组三', '组六'][new Set(drawDigits(draw, 3)).size], 3);
   const tailFocus = rankedOmissions(pl3, Array.from({ length: 10 }, (_, value) => value), (draw) => sum(drawDigits(draw, 3)) % 10, 2).map((item) => ({ ...item, label: `和尾 ${item.label}` }));
   $('#focus-group-type').innerHTML = focusRows([...groupFocus, ...tailFocus]);
+  $('#focus-pl5').innerHTML = focusRows(pl5WideFocus(pl5));
+}
 
-  const pl5Distribution = rankedOmissions(pl5, pl5Distributions, (draw) => {
-    const ds = drawDigits(draw, 5); return [0, 1, 2].map((route) => ds.filter((digit) => digit % 3 === route).length).join('');
-  }, 5).map((item) => ({ ...item, label: `012比 ${item.label}` }));
-  const pl5Names = ['万位', '千位', '百位', '十位', '个位'];
-  const pl5Positions = pl5Names.map((name, position) => {
-    const item = rankedOmissions(pl5, Array.from({ length: 10 }, (_, digit) => digit), (draw) => drawDigits(draw, 5)[position], 1)[0];
-    return { ...item, label: `${name} ${item.label}` };
-  });
-  $('#focus-pl5').innerHTML = focusRows([...pl5Distribution, ...pl5Positions]);
+function renderPl5OverviewFocus(pl5) {
+  $('#focus-route-title').textContent = '012直选形态';
+  $('#focus-route-meta').textContent = '243种';
+  $('#focus-position-meta').textContent = '万千百十个';
+  $('#focus-group-title').textContent = '重复形态与和尾';
+  $('#focus-group-meta').textContent = '形态';
+  $('#focus-wide-title').textContent = '排列五012分布与定位关注';
+  $('#focus-wide-meta').textContent = '综合观察';
+  const routeFocus = rankedOmissions(pl5, pl5DirectRoutes, (draw) => drawDigits(draw, 5).map((digit) => digit % 3).join(''), 5)
+    .map((item) => ({ ...item, label: `${item.label}路` }));
+  $('#focus-route').innerHTML = focusRows(routeFocus);
+  const names = ['万位', '千位', '百位', '十位', '个位'];
+  $('#focus-position').innerHTML = focusRows(names.flatMap((name, position) => rankedOmissions(pl5, Array.from({ length: 10 }, (_, digit) => digit), (draw) => drawDigits(draw, 5)[position], 2)
+    .map((item) => ({ ...item, label: `${name} ${item.label}` }))));
+  const oddFocus = rankedOmissions(pl5, patternList(['偶', '奇'], 5), (draw) => drawDigits(draw, 5).map((digit) => digit % 2 ? '奇' : '偶').join(''), 2)
+    .map((item) => ({ ...item, label: `奇偶 ${item.label}` }));
+  const sizeFocus = rankedOmissions(pl5, patternList(['小', '大'], 5), (draw) => drawDigits(draw, 5).map((digit) => digit >= 5 ? '大' : '小').join(''), 2)
+    .map((item) => ({ ...item, label: `大小 ${item.label}` }));
+  const zoneFocus = rankedOmissions(pl5, patternList(['小', '中', '大'], 5), (draw) => drawDigits(draw, 5).map((digit) => digit <= 2 ? '小' : digit <= 6 ? '中' : '大').join(''), 2)
+    .map((item) => ({ ...item, label: `三区 ${item.label}` }));
+  const sumFocus = rankedOmissions(pl5, Array.from({ length: 46 }, (_, value) => value), (draw) => sum(drawDigits(draw, 5)), 1).map((item) => ({ ...item, label: `和值 ${item.label}` }));
+  const spanFocus = rankedOmissions(pl5, Array.from({ length: 10 }, (_, value) => value), (draw) => { const ds = drawDigits(draw, 5); return Math.max(...ds) - Math.min(...ds); }, 1).map((item) => ({ ...item, label: `跨度 ${item.label}` }));
+  $('#focus-structure').innerHTML = focusRows([...oddFocus, ...sizeFocus, ...zoneFocus, ...sumFocus, ...spanFocus]);
+  const repeatFocus = rankedOmissions(pl5, [1, 2, 3, 4, 5], (draw) => new Set(drawDigits(draw, 5)).size, 5)
+    .map((item) => ({ ...item, label: `${item.label}种号` }));
+  const tailFocus = rankedOmissions(pl5, Array.from({ length: 10 }, (_, value) => value), (draw) => sum(drawDigits(draw, 5)) % 10, 2).map((item) => ({ ...item, label: `和尾 ${item.label}` }));
+  $('#focus-group-type').innerHTML = focusRows([...repeatFocus, ...tailFocus]);
+  $('#focus-pl5').innerHTML = focusRows(pl5WideFocus(pl5));
+}
+
+function renderOverview() {
+  const pl3 = overviewData.pl3;
+  const pl5 = overviewData.pl5;
+  if (!pl3.length || !pl5.length) return;
+  const pl3Latest = pl3[pl3.length - 1];
+  const pl5Latest = pl5[pl5.length - 1];
+  const activeDraws = overviewData[state.lottery];
+  const activeLatest = activeDraws[activeDraws.length - 1];
+  $('#overview-pl3-latest').textContent = drawDigits(pl3Latest, 3).join(' ');
+  $('#overview-pl3-issue').textContent = `${pl3Latest.issue}期 · ${pl3Latest.kjdate}`;
+  $('#overview-pl5-latest').textContent = drawDigits(pl5Latest, 5).join(' ');
+  $('#overview-pl5-issue').textContent = `${pl5Latest.issue}期 · ${pl5Latest.kjdate}`;
+  $('#overview-pl3-latest').closest('div').classList.toggle('active', state.lottery === 'pl3');
+  $('#overview-pl5-latest').closest('div').classList.toggle('active', state.lottery === 'pl5');
+  $('#overview-title').textContent = `${lotteryName()}今日研判`;
+  $('#overview-lottery-badge').textContent = lotteryName();
+  $('#overview-date').textContent = `${new Date().toISOString().slice(0, 10)} · 数据更新至${activeLatest.issue}期 · 每日方案已固定`;
+  $('#open-pl3-route').textContent = state.lottery === 'pl3' ? '查看012直选图' : '查看012走势图';
+  buildDailyOverview(activeDraws, state.lottery);
+  if (state.lottery === 'pl3') renderPl3OverviewFocus(pl3, pl5);
+  else renderPl5OverviewFocus(pl5);
 }
 
 async function loadOverviewData(refresh = false) {
@@ -1036,20 +1113,19 @@ async function switchLottery(lottery) {
 }
 
 async function useOverviewPick(key) {
-  if (!overviewRecommendations[key]?.length) return;
-  if (state.lottery !== 'pl3') await switchLottery('pl3');
+  const picks = overviewRecommendations[state.lottery][key];
+  if (!picks?.length) return;
   selectorState.mode = 'compound';
-  selectorState.picks = overviewRecommendations[key].map((list) => new Set(list));
-  selectorState.locked = Array(3).fill(false);
+  selectorState.picks = picks.map((list) => new Set(list));
+  selectorState.locked = Array(digitCount()).fill(false);
   selectorState.generatedTickets = [];
   showView('selector');
   renderSelector();
-  toast(`已带入${key === 'six' ? '6码' : '3码'}直选复式`);
+  toast(`已带入${picks[0].length}码直选复式`);
 }
 
-async function openPl3DirectRoute() {
-  if (state.lottery !== 'pl3') await switchLottery('pl3');
-  state.mode = 'route-direct';
+function openOverviewRoute() {
+  state.mode = state.lottery === 'pl3' ? 'route-direct' : 'route-main';
   buildMenu();
   showView('trend');
   renderTrend();
@@ -1060,7 +1136,7 @@ buildMenu();
 document.querySelectorAll('[data-lottery]').forEach((button) => button.addEventListener('click', () => switchLottery(button.dataset.lottery)));
 document.querySelectorAll('.nav-item').forEach((button) => button.addEventListener('click', () => showView(button.dataset.view)));
 document.querySelectorAll('[data-use-overview]').forEach((button) => button.addEventListener('click', () => useOverviewPick(button.dataset.useOverview)));
-$('#open-pl3-route').addEventListener('click', openPl3DirectRoute);
+$('#open-pl3-route').addEventListener('click', openOverviewRoute);
 $('#period-select').addEventListener('change', (event) => {
   const value = event.target.value;
   $('#custom-period-wrap').classList.toggle('show', value === 'custom');
