@@ -1,4 +1,6 @@
-const state = { lottery: 'pl5', draws: [], periods: 50, mode: 'position', lines: true, view: 'trend' };
+const state = { lottery: 'pl5', draws: [], periods: 50, mode: 'position', lines: true, view: 'overview' };
+const overviewData = { pl3: [], pl5: [] };
+const overviewRecommendations = { six: [], three: [] };
 let positionNames = ['万位', '千位', '百位', '十位', '个位'];
 let trendModes = [];
 const baseTrendModes = [
@@ -27,7 +29,8 @@ const selectorState = {
 const $ = (selector) => document.querySelector(selector);
 const digitCount = () => state.lottery === 'pl3' ? 3 : 5;
 const lotteryName = () => state.lottery === 'pl3' ? '排列三' : '排列五';
-const digits = (draw) => String(draw?.winnum || '').replace(/<[^>]*>/g, '').replace(/\D/g, '').slice(0, digitCount()).padStart(digitCount(), '0').split('').map(Number);
+const drawDigits = (draw, count) => String(draw?.winnum || '').replace(/<[^>]*>/g, '').replace(/\D/g, '').slice(0, count).padStart(count, '0').split('').map(Number);
+const digits = (draw) => drawDigits(draw, digitCount());
 const sum = (values) => values.reduce((a, b) => a + b, 0);
 const isPrime = (n) => [1, 2, 3, 5, 7].includes(n);
 
@@ -329,6 +332,134 @@ function drawLines() {
 function seededNoise(seed) {
   let x = seed % 2147483647;
   return () => ((x = x * 16807 % 2147483647) - 1) / 2147483646;
+}
+
+function currentOmission(draws, value, target) {
+  for (let index = draws.length - 1, omit = 0; index >= 0; index--, omit++) {
+    const result = value(draws[index]);
+    if ((Array.isArray(result) ? result : [result]).map(String).includes(String(target))) return omit;
+  }
+  return draws.length;
+}
+
+function rankedOmissions(draws, categories, value, limit) {
+  return categories.map((category) => ({ label: String(category), omit: currentOmission(draws, value, category) }))
+    .sort((a, b) => b.omit - a.omit || a.label.localeCompare(b.label))
+    .slice(0, limit);
+}
+
+function patternList(symbols, count) {
+  let values = [''];
+  for (let index = 0; index < count; index++) values = values.flatMap((prefix) => symbols.map((symbol) => `${prefix}${symbol}`));
+  return values;
+}
+
+function focusRows(items) {
+  return items.map((item) => `<div class="focus-row"><b>${item.label}</b><span>当前遗漏 <em>${item.omit}</em> 期</span></div>`).join('');
+}
+
+function balancedTop(ranking, count) {
+  const chosen = ranking.slice(0, count).map((item) => item.digit);
+  if (count > 1 && chosen.every((digit) => digit % 2 === chosen[0] % 2)) {
+    const alternate = ranking.find((item) => !chosen.includes(item.digit) && item.digit % 2 !== chosen[0] % 2);
+    if (alternate) chosen[chosen.length - 1] = alternate.digit;
+  }
+  if (count > 1 && chosen.every((digit) => (digit >= 5) === (chosen[0] >= 5))) {
+    const alternate = ranking.find((item) => !chosen.includes(item.digit) && (item.digit >= 5) !== (chosen[0] >= 5));
+    if (alternate) chosen[chosen.length - 1] = alternate.digit;
+  }
+  return [...new Set(chosen)].sort((a, b) => a - b);
+}
+
+function buildDailyPl3(draws) {
+  const sample = draws.slice(-80);
+  const today = new Date().toISOString().slice(0, 10);
+  const latestIssue = Number(draws[draws.length - 1]?.issue || 0);
+  const random = seededNoise(Number(today.replace(/\D/g, '')) + latestIssue);
+  const rankings = Array.from({ length: 3 }, (_, position) => {
+    const frequency = Array(10).fill(0);
+    sample.forEach((draw) => frequency[drawDigits(draw, 3)[position]]++);
+    const omissions = Array.from({ length: 10 }, (_, digit) => currentOmission(draws, (draw) => drawDigits(draw, 3)[position], digit));
+    const maxFrequency = Math.max(...frequency, 1);
+    const maxOmission = Math.max(...omissions, 1);
+    return Array.from({ length: 10 }, (_, digit) => ({
+      digit,
+      score: frequency[digit] / maxFrequency * .42 + omissions[digit] / maxOmission * .38 + random() * .08
+    })).sort((a, b) => b.score - a.score);
+  });
+  const six = rankings.map((ranking) => balancedTop(ranking, 6));
+  const three = rankings.map((ranking) => balancedTop(ranking, 3));
+  overviewRecommendations.six = six;
+  overviewRecommendations.three = three;
+  const aggregate = Array.from({ length: 10 }, (_, digit) => ({
+    digit,
+    score: rankings.reduce((total, ranking) => total + (10 - ranking.findIndex((item) => item.digit === digit)), 0)
+  })).sort((a, b) => b.score - a.score);
+  const group3 = aggregate.slice(0, 2).map((item) => item.digit);
+  const group6 = balancedTop(aggregate, 6);
+  const [a, b] = group3;
+  $('#daily-six').textContent = six.map((list) => list.join('')).join('-');
+  $('#daily-three').textContent = three.map((list) => list.join('')).join('-');
+  $('#daily-group3').textContent = `${a}${a}${b} / ${a}${b}${b}`;
+  $('#daily-group3-detail').textContent = `${a}${a}${b}、${a}${b}${a}、${b}${a}${a}、${a}${b}${b}、${b}${a}${b}、${b}${b}${a}`;
+  $('#daily-group6').textContent = group6.join(' ');
+}
+
+function renderOverview() {
+  const pl3 = overviewData.pl3;
+  const pl5 = overviewData.pl5;
+  if (!pl3.length || !pl5.length) return;
+  const pl3Latest = pl3[pl3.length - 1];
+  const pl5Latest = pl5[pl5.length - 1];
+  $('#overview-pl3-latest').textContent = drawDigits(pl3Latest, 3).join(' ');
+  $('#overview-pl3-issue').textContent = `${pl3Latest.issue}期 · ${pl3Latest.kjdate}`;
+  $('#overview-pl5-latest').textContent = drawDigits(pl5Latest, 5).join(' ');
+  $('#overview-pl5-issue').textContent = `${pl5Latest.issue}期 · ${pl5Latest.kjdate}`;
+  $('#overview-date').textContent = `${new Date().toISOString().slice(0, 10)} · 数据更新至${pl3Latest.issue}期 · 每日方案已固定`;
+  buildDailyPl3(pl3);
+
+  const directFocus = rankedOmissions(pl3, directRoutes, (draw) => drawDigits(draw, 3).map((digit) => digit % 3).join(''), 5)
+    .map((item) => ({ ...item, label: `${item.label}路` }));
+  $('#focus-route').innerHTML = focusRows(directFocus);
+
+  const pl3Names = ['百位', '十位', '个位'];
+  const positionFocus = pl3Names.flatMap((name, position) => rankedOmissions(pl3, Array.from({ length: 10 }, (_, digit) => digit), (draw) => drawDigits(draw, 3)[position], 2)
+    .map((item) => ({ ...item, label: `${name} ${item.label}` })));
+  $('#focus-position').innerHTML = focusRows(positionFocus);
+
+  const oddFocus = rankedOmissions(pl3, patternList(['偶', '奇'], 3), (draw) => drawDigits(draw, 3).map((digit) => digit % 2 ? '奇' : '偶').join(''), 2)
+    .map((item) => ({ ...item, label: `奇偶 ${item.label}` }));
+  const sizeFocus = rankedOmissions(pl3, patternList(['小', '大'], 3), (draw) => drawDigits(draw, 3).map((digit) => digit >= 5 ? '大' : '小').join(''), 2)
+    .map((item) => ({ ...item, label: `大小 ${item.label}` }));
+  const zoneFocus = rankedOmissions(pl3, patternList(['小', '中', '大'], 3), (draw) => drawDigits(draw, 3).map((digit) => digit <= 2 ? '小' : digit <= 6 ? '中' : '大').join(''), 2)
+    .map((item) => ({ ...item, label: `三区 ${item.label}` }));
+  const sumFocus = rankedOmissions(pl3, Array.from({ length: 28 }, (_, value) => value), (draw) => sum(drawDigits(draw, 3)), 1).map((item) => ({ ...item, label: `和值 ${item.label}` }));
+  const spanFocus = rankedOmissions(pl3, Array.from({ length: 10 }, (_, value) => value), (draw) => { const ds = drawDigits(draw, 3); return Math.max(...ds) - Math.min(...ds); }, 1).map((item) => ({ ...item, label: `跨度 ${item.label}` }));
+  $('#focus-structure').innerHTML = focusRows([...oddFocus, ...sizeFocus, ...zoneFocus, ...sumFocus, ...spanFocus]);
+
+  const groupFocus = rankedOmissions(pl3, ['豹子', '组三', '组六'], (draw) => ['','豹子', '组三', '组六'][new Set(drawDigits(draw, 3)).size], 3);
+  const tailFocus = rankedOmissions(pl3, Array.from({ length: 10 }, (_, value) => value), (draw) => sum(drawDigits(draw, 3)) % 10, 2).map((item) => ({ ...item, label: `和尾 ${item.label}` }));
+  $('#focus-group-type').innerHTML = focusRows([...groupFocus, ...tailFocus]);
+
+  const pl5Distribution = rankedOmissions(pl5, pl5Distributions, (draw) => {
+    const ds = drawDigits(draw, 5); return [0, 1, 2].map((route) => ds.filter((digit) => digit % 3 === route).length).join('');
+  }, 5).map((item) => ({ ...item, label: `012比 ${item.label}` }));
+  const pl5Names = ['万位', '千位', '百位', '十位', '个位'];
+  const pl5Positions = pl5Names.map((name, position) => {
+    const item = rankedOmissions(pl5, Array.from({ length: 10 }, (_, digit) => digit), (draw) => drawDigits(draw, 5)[position], 1)[0];
+    return { ...item, label: `${name} ${item.label}` };
+  });
+  $('#focus-pl5').innerHTML = focusRows([...pl5Distribution, ...pl5Positions]);
+}
+
+async function loadOverviewData(refresh = false) {
+  const missing = ['pl3', 'pl5'].filter((lottery) => refresh || !overviewData[lottery].length);
+  await Promise.all(missing.map(async (lottery) => {
+    const response = await fetch(`/api/draws?lottery=${lottery}&limit=10000${refresh ? '&refresh=1' : ''}`);
+    const result = await response.json();
+    overviewData[lottery] = result.data;
+  }));
+  renderOverview();
 }
 
 function generateRecommendation() {
@@ -649,6 +780,7 @@ function showView(view) {
   $('.shell').style.gridTemplateColumns = view === 'trend' ? '190px minmax(0, 1fr)' : '1fr';
   $('.toolbar').style.display = view === 'trend' ? '' : 'none';
   $('.summary-strip').style.display = view === 'trend' ? '' : 'none';
+  if (view === 'overview') renderOverview();
   if (view === 'recommend') generateRecommendation();
   if (view === 'history') renderHistory($('#history-search').value.trim());
   if (view === 'selector') renderSelector();
@@ -685,12 +817,13 @@ async function loadData(refresh = false) {
     const response = await fetch(`/api/draws?lottery=${state.lottery}&limit=10000${refresh ? '&refresh=1' : ''}`);
     const result = await response.json();
     state.draws = result.data;
+    overviewData[state.lottery] = result.data;
     $('#custom-period').max = state.draws.length;
     $('#custom-period').title = `可输入1至${state.draws.length}期`;
     const latest = state.draws[state.draws.length - 1];
     $('#latest-number').textContent = digits(latest).join(' ');
     $('#latest-issue').textContent = `${latest.issue}期 · ${latest.kjdate}`;
-    renderTrend(); generateRecommendation();
+    renderTrend(); generateRecommendation(); renderOverview();
     if (refresh) toast('开奖数据已刷新');
   } catch (error) {
     toast('数据加载失败，请稍后重试');
@@ -721,10 +854,32 @@ async function switchLottery(lottery) {
   showView(state.view);
 }
 
+async function useOverviewPick(key) {
+  if (!overviewRecommendations[key]?.length) return;
+  if (state.lottery !== 'pl3') await switchLottery('pl3');
+  selectorState.mode = 'compound';
+  selectorState.picks = overviewRecommendations[key].map((list) => new Set(list));
+  selectorState.locked = Array(3).fill(false);
+  selectorState.generatedTickets = [];
+  showView('selector');
+  renderSelector();
+  toast(`已带入${key === 'six' ? '6码' : '3码'}直选复式`);
+}
+
+async function openPl3DirectRoute() {
+  if (state.lottery !== 'pl3') await switchLottery('pl3');
+  state.mode = 'route-direct';
+  buildMenu();
+  showView('trend');
+  renderTrend();
+}
+
 refreshLotteryConfig();
 buildMenu();
 document.querySelectorAll('[data-lottery]').forEach((button) => button.addEventListener('click', () => switchLottery(button.dataset.lottery)));
 document.querySelectorAll('.nav-item').forEach((button) => button.addEventListener('click', () => showView(button.dataset.view)));
+document.querySelectorAll('[data-use-overview]').forEach((button) => button.addEventListener('click', () => useOverviewPick(button.dataset.useOverview)));
+$('#open-pl3-route').addEventListener('click', openPl3DirectRoute);
 $('#period-select').addEventListener('change', (event) => {
   const value = event.target.value;
   $('#custom-period-wrap').classList.toggle('show', value === 'custom');
@@ -819,4 +974,5 @@ $('#plus-multiple').addEventListener('click', () => { $('#ticket-multiple').valu
 $('#copy-ticket').addEventListener('click', copyTicketNotation);
 window.addEventListener('resize', drawLines);
 renderSelector();
-loadData();
+showView('overview');
+loadData().then(() => loadOverviewData()).catch(() => toast('主板数据加载失败，请稍后刷新'));

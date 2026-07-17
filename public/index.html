@@ -17,7 +17,8 @@
       </div>
     </div>
     <nav class="topnav" aria-label="主导航">
-      <button class="nav-item active" data-view="trend">走势分析</button>
+      <button class="nav-item active" data-view="overview">研判主板</button>
+      <button class="nav-item" data-view="trend">走势分析</button>
       <button class="nav-item" data-view="recommend">每日推荐</button>
       <button class="nav-item" data-view="selector">选号工具</button>
       <button class="nav-item" data-view="history">开奖数据</button>
@@ -61,7 +62,42 @@
 
       <div class="summary-strip" id="summary-strip"></div>
 
-      <section id="trend-view" class="view-panel active">
+      <section id="overview-view" class="view-panel active">
+        <div class="overview-page">
+          <header class="overview-head">
+            <div><span class="overview-kicker">DAILY BOARD</span><h1>排列三今日研判</h1><p id="overview-date">正在读取最新开奖与全历史遗漏...</p></div>
+            <div class="overview-latest">
+              <div><span>排列三最新</span><strong id="overview-pl3-latest">---</strong><small id="overview-pl3-issue">加载中</small></div>
+              <div><span>排列五最新</span><strong id="overview-pl5-latest">-----</strong><small id="overview-pl5-issue">加载中</small></div>
+            </div>
+          </header>
+
+          <section class="overview-band daily-band">
+            <div class="band-heading"><div><h2>今日号码方案</h2><p>每天固定计算一次；综合近期频次、当前遗漏和结构均衡</p></div><span>排列三</span></div>
+            <div class="daily-grid">
+              <article class="daily-item primary-daily"><header><strong>6码直选复式</strong><span>216注 · 432元</span></header><div class="daily-code" id="daily-six">--</div><p>每位6个候选，覆盖率21.6%</p><button data-use-overview="six">带入选号</button></article>
+              <article class="daily-item"><header><strong>3码直选复式</strong><span>27注 · 54元</span></header><div class="daily-code" id="daily-three">--</div><p>每位3个候选，覆盖率2.7%</p><button data-use-overview="three">带入选号</button></article>
+              <article class="daily-item"><header><strong>组三参考</strong><span>2组 · 4元</span></header><div class="daily-code compact" id="daily-group3">--</div><p id="daily-group3-detail">包含两种重号组合</p></article>
+              <article class="daily-item"><header><strong>组六6码复式</strong><span>20注 · 40元</span></header><div class="daily-code compact" id="daily-group6">--</div><p>6个互异候选号，组合数C(6,3)</p></article>
+            </div>
+          </section>
+
+          <section class="overview-band">
+            <div class="band-heading"><div><h2>高遗漏关注</h2><p>按当前遗漏从高到低排列，只作历史统计观察</p></div><button id="open-pl3-route" class="secondary-button">查看012直选图</button></div>
+            <div class="focus-grid">
+              <article class="focus-group"><header><strong>012直选形态</strong><span>27种</span></header><div id="focus-route" class="focus-list"><span class="loading-line">计算中...</span></div></article>
+              <article class="focus-group"><header><strong>分位关注数字</strong><span>百十个</span></header><div id="focus-position" class="focus-list"><span class="loading-line">计算中...</span></div></article>
+              <article class="focus-group"><header><strong>奇偶 / 大小 / 大中小</strong><span>结构</span></header><div id="focus-structure" class="focus-list"><span class="loading-line">计算中...</span></div></article>
+              <article class="focus-group"><header><strong>组三组六形态</strong><span>组选</span></header><div id="focus-group-type" class="focus-list"><span class="loading-line">计算中...</span></div></article>
+              <article class="focus-group wide-focus"><header><strong>排列五012分布与定位关注</strong><span>同步观察</span></header><div id="focus-pl5" class="focus-list horizontal"><span class="loading-line">计算中...</span></div></article>
+            </div>
+          </section>
+
+          <footer class="overview-note">遗漏越大不代表下一期越容易出现；同注数方案的理论中奖概率相同，请按预算理性使用。</footer>
+        </div>
+      </section>
+
+      <section id="trend-view" class="view-panel">
         <div class="chart-wrap" id="chart-wrap">
           <div id="trend-table" class="trend-table"></div>
           <canvas id="trend-lines" aria-hidden="true"></canvas>
