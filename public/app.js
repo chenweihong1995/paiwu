@@ -1,6 +1,7 @@
 const state = { lottery: 'pl5', draws: [], periods: 50, mode: 'position', lines: true, view: 'overview' };
 const overviewData = { pl3: [], pl5: [] };
 const overviewRecommendations = { six: [], three: [] };
+let pl3AlgorithmCache = null;
 let positionNames = ['万位', '千位', '百位', '十位', '个位'];
 let trendModes = [];
 const baseTrendModes = [
@@ -371,38 +372,210 @@ function balancedTop(ranking, count) {
   return [...new Set(chosen)].sort((a, b) => a - b);
 }
 
-function buildDailyPl3(draws) {
-  const sample = draws.slice(-80);
-  const today = new Date().toISOString().slice(0, 10);
-  const latestIssue = Number(draws[draws.length - 1]?.issue || 0);
-  const random = seededNoise(Number(today.replace(/\D/g, '')) + latestIssue);
-  const rankings = Array.from({ length: 3 }, (_, position) => {
-    const frequency = Array(10).fill(0);
-    sample.forEach((draw) => frequency[drawDigits(draw, 3)[position]]++);
-    const omissions = Array.from({ length: 10 }, (_, digit) => currentOmission(draws, (draw) => drawDigits(draw, 3)[position], digit));
-    const maxFrequency = Math.max(...frequency, 1);
-    const maxOmission = Math.max(...omissions, 1);
-    return Array.from({ length: 10 }, (_, digit) => ({
-      digit,
-      score: frequency[digit] / maxFrequency * .42 + omissions[digit] / maxOmission * .38 + random() * .08
-    })).sort((a, b) => b.score - a.score);
+const pl3ModelDefinitions = [
+  ['hot20', '近20期热度'], ['bayes60', '60期贝叶斯'], ['stable300', '300期稳定频率'],
+  ['decay', '指数衰减'], ['transition', '位置转移'], ['hazard', '遗漏危险率'],
+  ['structure', '012/奇偶/大小'], ['pattern', '前期形态转移'], ['ensemble', '多模型融合']
+];
+
+function normalizeScores(scores) {
+  const min = Math.min(...scores), max = Math.max(...scores);
+  if (max === min) return scores.map(() => 1);
+  return scores.map((score) => (score - min) / (max - min));
+}
+
+function frequencyScores(series, end, position, window, prior = .5) {
+  const scores = Array(10).fill(prior);
+  for (let index = Math.max(0, end - window); index < end; index++) scores[series[index][position]] += 1;
+  return normalizeScores(scores);
+}
+
+function decayScores(series, end, position) {
+  const scores = Array(10).fill(.25);
+  for (let index = Math.max(0, end - 180); index < end; index++) {
+    scores[series[index][position]] += Math.pow(.965, end - index - 1);
+  }
+  return normalizeScores(scores);
+}
+
+function transitionScores(series, end, position) {
+  const scores = Array(10).fill(.4);
+  const previousDigit = series[end - 1][position];
+  for (let index = Math.max(1, end - 500); index < end; index++) {
+    if (series[index - 1][position] === previousDigit) scores[series[index][position]] += 1;
+  }
+  const fallback = frequencyScores(series, end, position, 60);
+  return normalizeScores(scores).map((score, digit) => score * .75 + fallback[digit] * .25);
+}
+
+function hazardScores(series, end, position) {
+  const start = Math.max(0, end - 600);
+  const longFrequency = frequencyScores(series, end, position, 300);
+  return Array.from({ length: 10 }, (_, digit) => {
+    const occurrences = [];
+    for (let index = start; index < end; index++) if (series[index][position] === digit) occurrences.push(index);
+    const last = occurrences.length ? occurrences[occurrences.length - 1] : start - 1;
+    const currentGap = end - last - 1;
+    const targetInterval = currentGap + 1;
+    const intervals = occurrences.slice(1).map((index, i) => index - occurrences[i]);
+    const eligible = intervals.filter((interval) => interval >= targetInterval).length;
+    const exact = intervals.filter((interval) => interval === targetInterval).length;
+    const empiricalHazard = (exact + 1) / (eligible + 10);
+    return empiricalHazard * .8 + longFrequency[digit] * .2;
   });
-  const six = rankings.map((ranking) => balancedTop(ranking, 6));
-  const three = rankings.map((ranking) => balancedTop(ranking, 3));
-  overviewRecommendations.six = six;
-  overviewRecommendations.three = three;
+}
+
+function categoryTransitionScores(series, end, position, categoryCount, mapper) {
+  const scores = Array(categoryCount).fill(.5);
+  const previousCategory = mapper(series[end - 1][position]);
+  for (let index = Math.max(1, end - 500); index < end; index++) {
+    if (mapper(series[index - 1][position]) === previousCategory) scores[mapper(series[index][position])] += 1;
+  }
+  return normalizeScores(scores);
+}
+
+function structureScores(series, end, position) {
+  const route = categoryTransitionScores(series, end, position, 3, (digit) => digit % 3);
+  const parity = categoryTransitionScores(series, end, position, 2, (digit) => digit % 2);
+  const size = categoryTransitionScores(series, end, position, 2, (digit) => digit >= 5 ? 1 : 0);
+  const frequency = frequencyScores(series, end, position, 60);
+  return Array.from({ length: 10 }, (_, digit) => route[digit % 3] * .4 + parity[digit % 2] * .2 + size[digit >= 5 ? 1 : 0] * .2 + frequency[digit] * .2);
+}
+
+function patternTransitionScores(series, end, position) {
+  const scores = Array(10).fill(.4);
+  const previousPattern = series[end - 1].map((digit) => digit % 3).join('');
+  for (let index = Math.max(1, end - 600); index < end; index++) {
+    if (series[index - 1].map((digit) => digit % 3).join('') === previousPattern) scores[series[index][position]] += 1;
+  }
+  const frequency = frequencyScores(series, end, position, 60);
+  return normalizeScores(scores).map((score, digit) => score * .7 + frequency[digit] * .3);
+}
+
+function modelRankingsAt(series, end, position) {
+  const scores = {
+    hot20: frequencyScores(series, end, position, 20),
+    bayes60: frequencyScores(series, end, position, 60, 1),
+    stable300: frequencyScores(series, end, position, 300, 1),
+    decay: decayScores(series, end, position),
+    transition: transitionScores(series, end, position),
+    hazard: normalizeScores(hazardScores(series, end, position)),
+    structure: normalizeScores(structureScores(series, end, position)),
+    pattern: normalizeScores(patternTransitionScores(series, end, position))
+  };
+  const ensembleInputs = ['bayes60', 'stable300', 'decay', 'transition', 'hazard', 'structure', 'pattern'];
+  scores.ensemble = Array.from({ length: 10 }, (_, digit) => ensembleInputs.reduce((total, model) => total + scores[model][digit], 0) / ensembleInputs.length);
+  return pl3ModelDefinitions.map(([id]) => Array.from({ length: 10 }, (_, digit) => ({ digit, score: scores[id][digit] }))
+    .sort((a, b) => b.score - a.score || a.digit - b.digit).map((item) => item.digit));
+}
+
+function createPl3Backtest(draws) {
+  const signature = `${draws.length}:${draws[draws.length - 1]?.issue || ''}`;
+  if (pl3AlgorithmCache?.signature === signature) return pl3AlgorithmCache;
+  const series = draws.map((draw) => drawDigits(draw, 3));
+  const start = Math.max(220, series.length - 600);
+  const records = [];
+  for (let end = start; end < series.length; end++) {
+    records.push({
+      actual: series[end],
+      ranks: Array.from({ length: 3 }, (_, position) => modelRankingsAt(series, end, position))
+    });
+  }
+  pl3AlgorithmCache = {
+    signature,
+    records,
+    currentRanks: Array.from({ length: 3 }, (_, position) => modelRankingsAt(series, series.length, position)),
+    plans: {}
+  };
+  return pl3AlgorithmCache;
+}
+
+function selectBacktestedPlan(backtest, count) {
+  if (backtest.plans[count]) return backtest.plans[count];
+  const modelCount = pl3ModelDefinitions.length;
+  const split = Math.max(1, Math.floor(backtest.records.length * .7));
+  const hitRows = backtest.records.map((record) => ({
+    actual: record.actual,
+    hits: record.ranks.map((positionRanks, position) => positionRanks.map((ranking) => ranking.slice(0, count).includes(record.actual[position])))
+  }));
+  const bestCombo = Array.from({ length: 3 }, (_, position) => {
+    let bestModel = modelCount - 1, bestPositionHits = -1;
+    for (let model = 0; model < modelCount; model++) {
+      const hits = hitRows.slice(0, split).filter((record) => record.hits[position][model]).length;
+      if (hits > bestPositionHits || (hits === bestPositionHits && model === modelCount - 1)) {
+        bestPositionHits = hits;
+        bestModel = model;
+      }
+    }
+    return bestModel;
+  });
+  const bestHits = hitRows.slice(0, split).filter((record) => bestCombo.every((model, position) => record.hits[position][model])).length;
+  const validation = hitRows.slice(split);
+  const validationHits = validation.filter((record) => bestCombo.every((model, position) => record.hits[position][model])).length;
+  const validationPositionRates = bestCombo.map((model, position) => validation.length
+    ? validation.filter((record) => record.hits[position][model]).length / validation.length : 0);
+  const selectedRankings = bestCombo.map((model, position) => backtest.currentRanks[position][model]);
+  const plan = {
+    combo: bestCombo,
+    modelNames: bestCombo.map((model) => pl3ModelDefinitions[model][1]),
+    picks: selectedRankings.map((ranking) => ranking.slice(0, count).sort((a, b) => a - b)),
+    rankings: selectedRankings,
+    trainSize: split,
+    validationSize: validation.length,
+    trainRate: bestHits / split,
+    validationHits,
+    validationRate: validation.length ? validationHits / validation.length : 0,
+    validationPositionRates,
+    baseline: Math.pow(count / 10, 3)
+  };
+  backtest.plans[count] = plan;
+  return plan;
+}
+
+function buildDailyPl3(draws) {
+  const backtest = createPl3Backtest(draws);
+  const threePlan = selectBacktestedPlan(backtest, 3);
+  const sixPlan = selectBacktestedPlan(backtest, 6);
+  overviewRecommendations.six = sixPlan.picks;
+  overviewRecommendations.three = threePlan.picks;
   const aggregate = Array.from({ length: 10 }, (_, digit) => ({
     digit,
-    score: rankings.reduce((total, ranking) => total + (10 - ranking.findIndex((item) => item.digit === digit)), 0)
-  })).sort((a, b) => b.score - a.score);
+    score: threePlan.rankings.reduce((total, ranking) => total + (10 - ranking.indexOf(digit)), 0)
+  })).sort((a, b) => b.score - a.score || a.digit - b.digit);
   const group3 = aggregate.slice(0, 2).map((item) => item.digit);
   const group6 = balancedTop(aggregate, 6);
   const [a, b] = group3;
-  $('#daily-six').textContent = six.map((list) => list.join('')).join('-');
-  $('#daily-three').textContent = three.map((list) => list.join('')).join('-');
+  $('#daily-six').textContent = sixPlan.picks.map((list) => list.join('')).join('-');
+  $('#daily-three').textContent = threePlan.picks.map((list) => list.join('')).join('-');
+  $('#daily-six-note').textContent = `留出验证整注覆盖 ${(sixPlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(sixPlan.baseline * 100).toFixed(1)}%`;
+  $('#daily-three-note').textContent = `留出验证整注覆盖 ${(threePlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(threePlan.baseline * 100).toFixed(1)}%`;
+  $('#daily-six-meta').textContent = `${sixPlan.validationHits}/${sixPlan.validationSize}期 · 432元`;
+  $('#daily-three-meta').textContent = `${threePlan.validationHits}/${threePlan.validationSize}期 · 54元`;
+  $('#algorithm-summary').textContent = `最近${backtest.records.length}期步进回测：前${threePlan.trainSize}期按分位命中率选模，后${threePlan.validationSize}期仅验证`;
+  $('#algorithm-three-models').textContent = `3码：百${threePlan.modelNames[0]} / 十${threePlan.modelNames[1]} / 个${threePlan.modelNames[2]}`;
+  $('#algorithm-six-models').textContent = `6码：百${sixPlan.modelNames[0]} / 十${sixPlan.modelNames[1]} / 个${sixPlan.modelNames[2]}`;
   $('#daily-group3').textContent = `${a}${a}${b} / ${a}${b}${b}`;
   $('#daily-group3-detail').textContent = `${a}${a}${b}、${a}${b}${a}、${b}${a}${a}、${a}${b}${b}、${b}${a}${b}、${b}${b}${a}`;
   $('#daily-group6').textContent = group6.join(' ');
+}
+
+function renderBacktestedRecommendation(count) {
+  const plan = selectBacktestedPlan(createPl3Backtest(state.draws), count);
+  const picks = plan.picks;
+  const names = ['百位', '十位', '个位'];
+  $('#number-picks').style.gridTemplateColumns = 'repeat(3, minmax(90px, 1fr))';
+  $('#number-picks').innerHTML = picks.map((list, index) => `<div class="pick-column"><h3>${names[index]}</h3><div class="pick-digits">${list.map((number) => `<span class="pick-digit">${number}</span>`).join('')}</div></div>`).join('');
+  const bets = count ** 3;
+  $('#ticket-code').textContent = picks.map((list) => list.join('')).join('-');
+  $('#ticket-bets').textContent = `${bets}注`;
+  $('#ticket-cost').textContent = `${bets * 2}元`;
+  $('#ticket-probability').textContent = `理论概率 ${(bets / 10).toFixed(3)}%`;
+  $('#reason-list').innerHTML = names.map((name, position) => `<div class="reason-item"><strong>${name}：${plan.modelNames[position]}</strong><span>最近${plan.validationSize}期留出分位覆盖率 ${(plan.validationPositionRates[position] * 100).toFixed(1)}%，该段未参与选模。</span></div>`).join('');
+  $('#recommend-date').textContent = `滚动回测${plan.trainSize + plan.validationSize}期 · 留出整注覆盖 ${(plan.validationRate * 100).toFixed(1)}% · 理论基线 ${(plan.baseline * 100).toFixed(1)}%`;
+  $('.model-controls h2').textContent = '回测自动选模';
+  $('.model-badge').textContent = '样本外验证版';
+  $('#generate-button').textContent = '重新回测';
+  ['model-window', 'omit-weight', 'freq-weight', 'balance-toggle'].forEach((id) => { $(`#${id}`).disabled = true; });
 }
 
 function renderOverview() {
@@ -464,6 +637,14 @@ async function loadOverviewData(refresh = false) {
 
 function generateRecommendation() {
   const count = Number($('#digits-slider').value);
+  if (state.lottery === 'pl3' && state.draws.length) {
+    renderBacktestedRecommendation(count);
+    return;
+  }
+  $('.model-controls h2').textContent = '模型偏好';
+  $('.model-badge').textContent = '每日固定版';
+  $('#generate-button').textContent = '重新计算';
+  ['model-window', 'omit-weight', 'freq-weight', 'balance-toggle'].forEach((id) => { $(`#${id}`).disabled = false; });
   const windowSize = Number($('#model-window').value);
   const omitWeight = Number($('#omit-weight').value) / 100;
   const freqWeight = Number($('#freq-weight').value) / 100;

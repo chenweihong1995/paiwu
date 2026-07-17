@@ -73,12 +73,16 @@
           </header>
 
           <section class="overview-band daily-band">
-            <div class="band-heading"><div><h2>今日号码方案</h2><p>每天固定计算一次；综合近期频次、当前遗漏和结构均衡</p></div><span>排列三</span></div>
+            <div class="band-heading"><div><h2>今日号码方案</h2><p>滚动回测自动选模；训练段选择规则，较新留出段验证</p></div><span>排列三</span></div>
             <div class="daily-grid">
-              <article class="daily-item primary-daily"><header><strong>6码直选复式</strong><span>216注 · 432元</span></header><div class="daily-code" id="daily-six">--</div><p>每位6个候选，覆盖率21.6%</p><button data-use-overview="six">带入选号</button></article>
-              <article class="daily-item"><header><strong>3码直选复式</strong><span>27注 · 54元</span></header><div class="daily-code" id="daily-three">--</div><p>每位3个候选，覆盖率2.7%</p><button data-use-overview="three">带入选号</button></article>
+              <article class="daily-item primary-daily"><header><strong>6码直选复式</strong><span id="daily-six-meta">216注 · 432元</span></header><div class="daily-code" id="daily-six">--</div><p id="daily-six-note">正在执行滚动回测...</p><button data-use-overview="six">带入选号</button></article>
+              <article class="daily-item"><header><strong>3码直选复式</strong><span id="daily-three-meta">27注 · 54元</span></header><div class="daily-code" id="daily-three">--</div><p id="daily-three-note">正在执行滚动回测...</p><button data-use-overview="three">带入选号</button></article>
               <article class="daily-item"><header><strong>组三参考</strong><span>2组 · 4元</span></header><div class="daily-code compact" id="daily-group3">--</div><p id="daily-group3-detail">包含两种重号组合</p></article>
               <article class="daily-item"><header><strong>组六6码复式</strong><span>20注 · 40元</span></header><div class="daily-code compact" id="daily-group6">--</div><p>6个互异候选号，组合数C(6,3)</p></article>
+            </div>
+            <div class="algorithm-audit">
+              <div><strong>样本外验证</strong><span id="algorithm-summary">准备最近600期的步进回测...</span></div>
+              <div class="algorithm-models"><span id="algorithm-three-models">3码模型：--</span><span id="algorithm-six-models">6码模型：--</span></div>
             </div>
           </section>
 
