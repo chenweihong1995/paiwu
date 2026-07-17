@@ -2,6 +2,10 @@ const state = { lottery: 'pl5', draws: [], periods: 50, mode: 'position', lines:
 const overviewData = { pl3: [], pl5: [] };
 const overviewRecommendations = { pl3: { wide: [], narrow: [] }, pl5: { wide: [], narrow: [] } };
 const algorithmCaches = { pl3: null, pl5: null };
+const RECOMMENDATION_WINDOW = 100;
+const BACKTEST_WINDOW = 600;
+const VALIDATION_WINDOW = 180;
+const RECENT_SIGNAL_WEIGHT = .7;
 let positionNames = ['万位', '千位', '百位', '十位', '个位'];
 let trendModes = [];
 const baseTrendModes = [
@@ -369,9 +373,10 @@ function balancedTop(ranking, count) {
 }
 
 const modelDefinitions = [
-  ['hot20', '近20期热度'], ['bayes60', '60期贝叶斯'], ['stable300', '300期稳定频率'],
+  ['hot20', '近20期热度'], ['bayes60', '60期贝叶斯'], ['recent100', '100期主频率'],
+  ['stable300', '300期稳定频率'], ['stable600', '600期稳定频率'],
   ['decay', '指数衰减'], ['transition', '位置转移'], ['hazard', '遗漏危险率'],
-  ['structure', '012/奇偶/大小'], ['pattern', '前期形态转移'], ['ensemble', '多模型融合']
+  ['structure', '012/奇偶/大小'], ['pattern', '前期形态转移'], ['ensemble', '100期主导融合']
 ];
 
 function normalizeScores(scores) {
@@ -388,8 +393,8 @@ function frequencyScores(series, end, position, window, prior = .5) {
 
 function decayScores(series, end, position) {
   const scores = Array(10).fill(.25);
-  for (let index = Math.max(0, end - 180); index < end; index++) {
-    scores[series[index][position]] += Math.pow(.965, end - index - 1);
+  for (let index = Math.max(0, end - RECOMMENDATION_WINDOW); index < end; index++) {
+    scores[series[index][position]] += Math.pow(.97, end - index - 1);
   }
   return normalizeScores(scores);
 }
@@ -405,7 +410,7 @@ function transitionScores(series, end, position) {
 }
 
 function hazardScores(series, end, position) {
-  const start = Math.max(0, end - 600);
+  const start = Math.max(0, end - BACKTEST_WINDOW);
   const longFrequency = frequencyScores(series, end, position, 300);
   return Array.from({ length: 10 }, (_, digit) => {
     const occurrences = [];
@@ -441,7 +446,7 @@ function structureScores(series, end, position) {
 function patternTransitionScores(series, end, position) {
   const scores = Array(10).fill(.4);
   const previousPattern = series[end - 1].map((digit) => digit % 3).join('');
-  for (let index = Math.max(1, end - 600); index < end; index++) {
+  for (let index = Math.max(1, end - BACKTEST_WINDOW); index < end; index++) {
     if (series[index - 1].map((digit) => digit % 3).join('') === previousPattern) scores[series[index][position]] += 1;
   }
   const frequency = frequencyScores(series, end, position, 60);
@@ -452,15 +457,22 @@ function modelRankingsAt(series, end, position) {
   const scores = {
     hot20: frequencyScores(series, end, position, 20),
     bayes60: frequencyScores(series, end, position, 60, 1),
+    recent100: frequencyScores(series, end, position, RECOMMENDATION_WINDOW, 1),
     stable300: frequencyScores(series, end, position, 300, 1),
+    stable600: frequencyScores(series, end, position, BACKTEST_WINDOW, 1),
     decay: decayScores(series, end, position),
     transition: transitionScores(series, end, position),
     hazard: normalizeScores(hazardScores(series, end, position)),
     structure: normalizeScores(structureScores(series, end, position)),
     pattern: normalizeScores(patternTransitionScores(series, end, position))
   };
-  const ensembleInputs = ['bayes60', 'stable300', 'decay', 'transition', 'hazard', 'structure', 'pattern'];
-  scores.ensemble = Array.from({ length: 10 }, (_, digit) => ensembleInputs.reduce((total, model) => total + scores[model][digit], 0) / ensembleInputs.length);
+  const recentInputs = ['hot20', 'bayes60', 'recent100', 'decay', 'structure'];
+  const stabilityInputs = ['stable300', 'stable600', 'transition', 'hazard', 'pattern'];
+  scores.ensemble = Array.from({ length: 10 }, (_, digit) => {
+    const recentScore = recentInputs.reduce((total, model) => total + scores[model][digit], 0) / recentInputs.length;
+    const stabilityScore = stabilityInputs.reduce((total, model) => total + scores[model][digit], 0) / stabilityInputs.length;
+    return recentScore * RECENT_SIGNAL_WEIGHT + stabilityScore * (1 - RECENT_SIGNAL_WEIGHT);
+  });
   return modelDefinitions.map(([id]) => Array.from({ length: 10 }, (_, digit) => ({ digit, score: scores[id][digit] }))
     .sort((a, b) => b.score - a.score || a.digit - b.digit).map((item) => item.digit));
 }
@@ -470,7 +482,7 @@ function createBacktest(draws, lottery = state.lottery) {
   if (algorithmCaches[lottery]?.signature === signature) return algorithmCaches[lottery];
   const positionCount = lottery === 'pl3' ? 3 : 5;
   const series = draws.map((draw) => drawDigits(draw, positionCount));
-  const start = Math.max(220, series.length - 600);
+  const start = Math.max(220, series.length - BACKTEST_WINDOW);
   const records = [];
   for (let end = start; end < series.length; end++) {
     records.push({
@@ -508,6 +520,17 @@ function combineModelRankings(rankings, weights) {
     .sort((a, b) => scores[b] - scores[a] || a - b);
 }
 
+function strategySelectionScore(trainingRecords, position, strategy, count) {
+  const recentStart = Math.max(0, trainingRecords.length - RECOMMENDATION_WINDOW);
+  const recentRecords = trainingRecords.slice(recentStart);
+  const stabilityRecords = trainingRecords.slice(0, recentStart);
+  const hitRate = (records) => records.length ? records.filter((record) =>
+    record.candidateRankings[position][strategy].slice(0, count).includes(record.actual[position])).length / records.length : 0;
+  const recentRate = hitRate(recentRecords);
+  const stabilityRate = hitRate(stabilityRecords.length ? stabilityRecords : trainingRecords);
+  return recentRate * RECENT_SIGNAL_WEIGHT + stabilityRate * (1 - RECENT_SIGNAL_WEIGHT);
+}
+
 function planMetrics(predictionRecords, split, positionCount) {
   const isFullHit = (record) => record.picks.every((list, position) => list.includes(record.actual[position]));
   const training = predictionRecords.slice(0, split);
@@ -531,7 +554,7 @@ function selectBacktestedPlan(backtest, count) {
   const strategyCount = modelCount + 2;
   const baselinePosition = count / 10;
   const priorStrength = 24;
-  const decay = .99;
+  const decay = .988;
   const stats = Array.from({ length: backtest.positionCount }, () => ({
     hits: Array(modelCount).fill(priorStrength * baselinePosition),
     totals: Array(modelCount).fill(priorStrength)
@@ -553,24 +576,24 @@ function selectBacktestedPlan(backtest, count) {
     }));
     return strategyRecord;
   });
-  const split = Math.max(1, Math.floor(strategyRecords.length * .7));
+  const validationSize = Math.min(VALIDATION_WINDOW, Math.max(1, Math.floor(strategyRecords.length * .3)));
+  const split = Math.max(1, strategyRecords.length - validationSize);
+  const trainingRecords = strategyRecords.slice(0, split);
   const selectedStrategies = Array.from({ length: backtest.positionCount }, (_, position) => {
     let bestStrategy = 0;
-    let bestHits = -1;
+    let bestScore = -1;
     for (let strategy = 0; strategy < modelCount; strategy++) {
-      const hits = strategyRecords.slice(0, split).filter((record) =>
-        record.candidateRankings[position][strategy].slice(0, count).includes(record.actual[position])).length;
-      if (hits > bestHits) {
-        bestHits = hits;
+      const score = strategySelectionScore(trainingRecords, position, strategy, count);
+      if (score > bestScore) {
+        bestScore = score;
         bestStrategy = strategy;
       }
     }
-    const fusionMinimumGain = Math.max(2, Math.ceil(split * .01));
+    const fusionMinimumGain = .01;
     for (let strategy = equalStrategy; strategy < strategyCount; strategy++) {
-      const hits = strategyRecords.slice(0, split).filter((record) =>
-        record.candidateRankings[position][strategy].slice(0, count).includes(record.actual[position])).length;
-      if (hits >= bestHits + fusionMinimumGain) {
-        bestHits = hits;
+      const score = strategySelectionScore(trainingRecords, position, strategy, count);
+      if (score >= bestScore + fusionMinimumGain) {
+        bestScore = score;
         bestStrategy = strategy;
       }
     }
@@ -600,6 +623,8 @@ function selectBacktestedPlan(backtest, count) {
     trainSize: split,
     ...planMetrics(predictionRecords, split, backtest.positionCount),
     baseline: Math.pow(count / 10, backtest.positionCount),
+    recommendationWindow: RECOMMENDATION_WINDOW,
+    recentSignalWeight: RECENT_SIGNAL_WEIGHT,
     method: 'champion-ensemble'
   };
   backtest.plans[planKey] = plan;
@@ -665,7 +690,7 @@ function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
   $('#daily-three-note').textContent = `逐期样本外覆盖 ${(narrowPlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(narrowPlan.baseline * 100).toFixed(1)}%`;
   $('#daily-six-meta').textContent = `${widePlan.validationHits}/${widePlan.validationSize}期 · ${wideBets * 2}元`;
   $('#daily-three-meta').textContent = `${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${narrowBets * 2}元`;
-  $('#algorithm-summary').textContent = `最近${backtest.records.length}期冠军挑战：前${narrowPlan.trainSize}期比较9个单模与2个融合策略，后${narrowPlan.validationSize}期完全留出验证`;
+  $('#algorithm-summary').textContent = `近${narrowPlan.recommendationWindow}期信号占${Math.round(narrowPlan.recentSignalWeight * 100)}%，中长期占${Math.round((1 - narrowPlan.recentSignalWeight) * 100)}%；${backtest.records.length}期回测，后${narrowPlan.validationSize}期留出验证`;
   $('#algorithm-three-models').textContent = `${narrowCount}码：${names.map((name, position) => `${name.slice(0, 1)}${narrowPlan.modelNames[position]}`).join(' / ')}`;
   $('#algorithm-six-models').textContent = widePlan.alignedWithPl5
     ? '6码：排三3码核心 + 排五前三位3码 + 同模型补足'
@@ -709,7 +734,7 @@ function renderBacktestedRecommendation(count) {
   $('#ticket-cost').textContent = `${bets * 2}元`;
   $('#ticket-probability').textContent = `理论概率 ${(bets / (10 ** names.length) * 100).toFixed(3)}%`;
   $('#reason-list').innerHTML = names.map((name, position) => `<div class="reason-item"><strong>${name}：${plan.modelNames[position]}</strong><span>后${plan.validationSize}期完全留出分位覆盖率 ${(plan.validationPositionRates[position] * 100).toFixed(1)}%，该段未参与策略选择。</span></div>`).join('');
-  $('#recommend-date').textContent = `冠军挑战回测${plan.trainSize + plan.validationSize}期 · 留出整注覆盖 ${(plan.validationRate * 100).toFixed(1)}% · 理论基线 ${(plan.baseline * 100).toFixed(1)}%`;
+  $('#recommend-date').textContent = `近${plan.recommendationWindow}期权重${Math.round(plan.recentSignalWeight * 100)}% · 回测${plan.trainSize + plan.validationSize}期 · 留出整注覆盖 ${(plan.validationRate * 100).toFixed(1)}% · 理论基线 ${(plan.baseline * 100).toFixed(1)}%`;
   $('.model-controls h2').textContent = '冠军挑战集成';
   $('.model-badge').textContent = '完全留出验证版';
   $('#generate-button').textContent = '重新回测';
