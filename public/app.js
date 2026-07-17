@@ -5,7 +5,8 @@ const algorithmCaches = { pl3: null, pl5: null };
 const RECOMMENDATION_WINDOW = 100;
 const BACKTEST_WINDOW = 600;
 const VALIDATION_WINDOW = 180;
-const RECENT_SIGNAL_WEIGHT = .85;
+const WEIGHT_VALIDATION_WINDOW = 100;
+const RECENT_WEIGHT_CANDIDATES = [.5, .65, .7, .75, .85];
 let positionNames = ['万位', '千位', '百位', '十位', '个位'];
 let trendModes = [];
 const baseTrendModes = [
@@ -376,7 +377,7 @@ const modelDefinitions = [
   ['hot20', '近20期热度'], ['bayes60', '60期贝叶斯'], ['recent100', '100期主频率'],
   ['stable300', '300期稳定频率'], ['stable600', '600期稳定频率'],
   ['decay', '指数衰减'], ['transition', '位置转移'], ['hazard', '遗漏危险率'],
-  ['structure', '012/奇偶/大小'], ['pattern', '前期形态转移'], ['ensemble', '100期主导融合']
+  ['structure', '012/奇偶/大小'], ['pattern', '前期形态转移']
 ];
 
 function normalizeScores(scores) {
@@ -466,13 +467,6 @@ function modelRankingsAt(series, end, position) {
     structure: normalizeScores(structureScores(series, end, position)),
     pattern: normalizeScores(patternTransitionScores(series, end, position))
   };
-  const recentInputs = ['hot20', 'bayes60', 'recent100', 'decay', 'structure'];
-  const stabilityInputs = ['stable300', 'stable600', 'transition', 'hazard', 'pattern'];
-  scores.ensemble = Array.from({ length: 10 }, (_, digit) => {
-    const recentScore = recentInputs.reduce((total, model) => total + scores[model][digit], 0) / recentInputs.length;
-    const stabilityScore = stabilityInputs.reduce((total, model) => total + scores[model][digit], 0) / stabilityInputs.length;
-    return recentScore * RECENT_SIGNAL_WEIGHT + stabilityScore * (1 - RECENT_SIGNAL_WEIGHT);
-  });
   return modelDefinitions.map(([id]) => Array.from({ length: 10 }, (_, digit) => ({ digit, score: scores[id][digit] }))
     .sort((a, b) => b.score - a.score || a.digit - b.digit).map((item) => item.digit));
 }
@@ -520,7 +514,16 @@ function combineModelRankings(rankings, weights) {
     .sort((a, b) => scores[b] - scores[a] || a - b);
 }
 
-function strategySelectionScore(trainingRecords, position, strategy, count) {
+const recentModelIds = new Set(['hot20', 'bayes60', 'recent100', 'decay', 'structure']);
+
+function recencyBlendWeights(recentWeight) {
+  const recentCount = modelDefinitions.filter(([id]) => recentModelIds.has(id)).length;
+  const stabilityCount = modelDefinitions.length - recentCount;
+  return modelDefinitions.map(([id]) => recentModelIds.has(id)
+    ? recentWeight / recentCount : (1 - recentWeight) / stabilityCount);
+}
+
+function strategySelectionScore(trainingRecords, position, strategy, count, recentWeight) {
   const recentStart = Math.max(0, trainingRecords.length - RECOMMENDATION_WINDOW);
   const recentRecords = trainingRecords.slice(recentStart);
   const stabilityRecords = trainingRecords.slice(0, recentStart);
@@ -528,7 +531,46 @@ function strategySelectionScore(trainingRecords, position, strategy, count) {
     record.candidateRankings[position][strategy].slice(0, count).includes(record.actual[position])).length / records.length : 0;
   const recentRate = hitRate(recentRecords);
   const stabilityRate = hitRate(stabilityRecords.length ? stabilityRecords : trainingRecords);
-  return recentRate * RECENT_SIGNAL_WEIGHT + stabilityRate * (1 - RECENT_SIGNAL_WEIGHT);
+  return recentRate * recentWeight + stabilityRate * (1 - recentWeight);
+}
+
+function selectCandidateStrategies(trainingRecords, positionCount, count, modelCount, recentWeight) {
+  const strategyCount = modelCount + 3;
+  return Array.from({ length: positionCount }, (_, position) => {
+    let bestStrategy = 0;
+    let bestScore = -1;
+    for (let strategy = 0; strategy < modelCount; strategy++) {
+      const score = strategySelectionScore(trainingRecords, position, strategy, count, recentWeight);
+      if (score > bestScore) {
+        bestScore = score;
+        bestStrategy = strategy;
+      }
+    }
+    const fusionMinimumGain = .01;
+    for (let strategy = modelCount; strategy < strategyCount; strategy++) {
+      const score = strategySelectionScore(trainingRecords, position, strategy, count, recentWeight);
+      if (score >= bestScore + fusionMinimumGain) {
+        bestScore = score;
+        bestStrategy = strategy;
+      }
+    }
+    return bestStrategy;
+  });
+}
+
+function candidateValidationMetrics(records, strategies, count, positionCount) {
+  let positionHits = 0;
+  let fullHits = 0;
+  records.forEach((record) => {
+    const hits = strategies.map((strategy, position) =>
+      record.candidateRankings[position][strategy].slice(0, count).includes(record.actual[position]));
+    positionHits += hits.filter(Boolean).length;
+    if (hits.every(Boolean)) fullHits += 1;
+  });
+  return {
+    positionRate: records.length ? positionHits / (records.length * positionCount) : 0,
+    fullRate: records.length ? fullHits / records.length : 0
+  };
 }
 
 function planMetrics(predictionRecords, split, positionCount) {
@@ -547,11 +589,12 @@ function planMetrics(predictionRecords, split, positionCount) {
 }
 
 function selectBacktestedPlan(backtest, count) {
-  const planKey = `champion:${count}`;
+  const planKey = `auto-weight:${count}`;
   if (backtest.plans[planKey]) return backtest.plans[planKey];
   const modelCount = modelDefinitions.length;
-  const equalStrategy = modelCount;
-  const strategyCount = modelCount + 2;
+  const recencyStrategy = modelCount;
+  const equalStrategy = modelCount + 1;
+  const onlineStrategy = modelCount + 2;
   const baselinePosition = count / 10;
   const priorStrength = 24;
   const decay = .988;
@@ -559,61 +602,79 @@ function selectBacktestedPlan(backtest, count) {
     hits: Array(modelCount).fill(priorStrength * baselinePosition),
     totals: Array(modelCount).fill(priorStrength)
   }));
-  const strategyRecords = backtest.records.map((record) => {
-    const candidateRankings = record.ranks.map((positionRanks, position) => [
-      ...positionRanks,
-      combineModelRankings(positionRanks, Array(modelCount).fill(1)),
-      combineModelRankings(positionRanks, reliabilityWeights(stats[position], baselinePosition))
-    ]);
-    const strategyRecord = {
+  const baseRecords = backtest.records.map((record) => {
+    const baseRecord = {
       issue: record.issue,
       actual: record.actual,
-      candidateRankings
+      positionRanks: record.ranks,
+      equalRankings: record.ranks.map((positionRanks) => combineModelRankings(positionRanks, Array(modelCount).fill(1))),
+      onlineRankings: record.ranks.map((positionRanks, position) =>
+        combineModelRankings(positionRanks, reliabilityWeights(stats[position], baselinePosition)))
     };
     record.ranks.forEach((positionRanks, position) => positionRanks.forEach((ranking, model) => {
       stats[position].hits[model] = stats[position].hits[model] * decay + (ranking.slice(0, count).includes(record.actual[position]) ? 1 : 0);
       stats[position].totals[model] = stats[position].totals[model] * decay + 1;
     }));
-    return strategyRecord;
+    return baseRecord;
   });
-  const validationSize = Math.min(VALIDATION_WINDOW, Math.max(1, Math.floor(strategyRecords.length * .3)));
-  const split = Math.max(1, strategyRecords.length - validationSize);
+  const recordsForWeight = (recentWeight) => {
+    const blendWeights = recencyBlendWeights(recentWeight);
+    return baseRecords.map((record) => ({
+      issue: record.issue,
+      actual: record.actual,
+      candidateRankings: record.positionRanks.map((positionRanks, position) => [
+        ...positionRanks,
+        combineModelRankings(positionRanks, blendWeights),
+        record.equalRankings[position],
+        record.onlineRankings[position]
+      ])
+    }));
+  };
+  const validationSize = Math.min(VALIDATION_WINDOW, Math.max(1, Math.floor(baseRecords.length * .3)));
+  const split = Math.max(1, baseRecords.length - validationSize);
+  const weightValidationSize = Math.min(WEIGHT_VALIDATION_WINDOW, Math.max(1, Math.floor(split * .25)));
+  const weightTrainingSize = Math.max(1, split - weightValidationSize);
+  const weightTrials = RECENT_WEIGHT_CANDIDATES.map((recentWeight) => {
+    const weightedRecords = recordsForWeight(recentWeight);
+    const weightTraining = weightedRecords.slice(0, weightTrainingSize);
+    const weightValidation = weightedRecords.slice(weightTrainingSize, split);
+    const strategies = selectCandidateStrategies(weightTraining, backtest.positionCount, count, modelCount, recentWeight);
+    const metrics = candidateValidationMetrics(weightValidation, strategies, count, backtest.positionCount);
+    return {
+      recentWeight,
+      weightedRecords,
+      ...metrics,
+      selectionScore: metrics.positionRate - Math.abs(recentWeight - .7) * .01
+    };
+  });
+  weightTrials.sort((a, b) => b.selectionScore - a.selectionScore || b.fullRate - a.fullRate
+    || Math.abs(a.recentWeight - .7) - Math.abs(b.recentWeight - .7));
+  const selectedTrial = weightTrials[0];
+  const selectedRecentWeight = selectedTrial.recentWeight;
+  const strategyRecords = selectedTrial.weightedRecords;
   const trainingRecords = strategyRecords.slice(0, split);
-  const selectedStrategies = Array.from({ length: backtest.positionCount }, (_, position) => {
-    let bestStrategy = 0;
-    let bestScore = -1;
-    for (let strategy = 0; strategy < modelCount; strategy++) {
-      const score = strategySelectionScore(trainingRecords, position, strategy, count);
-      if (score > bestScore) {
-        bestScore = score;
-        bestStrategy = strategy;
-      }
-    }
-    const fusionMinimumGain = .01;
-    for (let strategy = equalStrategy; strategy < strategyCount; strategy++) {
-      const score = strategySelectionScore(trainingRecords, position, strategy, count);
-      if (score >= bestScore + fusionMinimumGain) {
-        bestScore = score;
-        bestStrategy = strategy;
-      }
-    }
-    return bestStrategy;
-  });
+  const selectedStrategies = selectCandidateStrategies(
+    trainingRecords, backtest.positionCount, count, modelCount, selectedRecentWeight
+  );
   const predictionRecords = strategyRecords.map((record) => {
     const rankings = selectedStrategies.map((strategy, position) => record.candidateRankings[position][strategy]);
     return { issue: record.issue, actual: record.actual, rankings, picks: rankings.map((ranking) => ranking.slice(0, count)) };
   });
   const finalWeights = stats.map((positionStats) => reliabilityWeights(positionStats, baselinePosition));
   const dominantModels = finalWeights.map((weights) => weights.indexOf(Math.max(...weights)));
+  const blendWeights = recencyBlendWeights(selectedRecentWeight);
   const currentCandidates = backtest.currentRanks.map((positionRanks, position) => [
     ...positionRanks,
+    combineModelRankings(positionRanks, blendWeights),
     combineModelRankings(positionRanks, Array(modelCount).fill(1)),
     combineModelRankings(positionRanks, finalWeights[position])
   ]);
   const selectedRankings = selectedStrategies.map((strategy, position) => currentCandidates[position][strategy]);
   const strategyName = (strategy, position) => strategy < modelCount
     ? modelDefinitions[strategy][1]
-    : strategy === equalStrategy ? '等权多模型融合' : `在线融合·${modelDefinitions[dominantModels[position]][1]}主导`;
+    : strategy === recencyStrategy ? `自动融合·近100期${Math.round(selectedRecentWeight * 100)}%`
+      : strategy === equalStrategy ? '等权多模型融合'
+        : strategy === onlineStrategy ? `在线融合·${modelDefinitions[dominantModels[position]][1]}主导` : '自动融合';
   const plan = {
     combo: selectedStrategies,
     modelNames: selectedStrategies.map(strategyName),
@@ -624,8 +685,11 @@ function selectBacktestedPlan(backtest, count) {
     ...planMetrics(predictionRecords, split, backtest.positionCount),
     baseline: Math.pow(count / 10, backtest.positionCount),
     recommendationWindow: RECOMMENDATION_WINDOW,
-    recentSignalWeight: RECENT_SIGNAL_WEIGHT,
-    method: 'champion-ensemble'
+    recentSignalWeight: selectedRecentWeight,
+    weightValidationSize,
+    weightValidationRate: selectedTrial.positionRate,
+    weightCandidates: RECENT_WEIGHT_CANDIDATES,
+    method: 'auto-weight-champion'
   };
   backtest.plans[planKey] = plan;
   return plan;
@@ -690,7 +754,7 @@ function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
   $('#daily-three-note').textContent = `逐期样本外覆盖 ${(narrowPlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(narrowPlan.baseline * 100).toFixed(1)}%`;
   $('#daily-six-meta').textContent = `${widePlan.validationHits}/${widePlan.validationSize}期 · ${wideBets * 2}元`;
   $('#daily-three-meta').textContent = `${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${narrowBets * 2}元`;
-  $('#algorithm-summary').textContent = `近${narrowPlan.recommendationWindow}期信号占${Math.round(narrowPlan.recentSignalWeight * 100)}%，中长期占${Math.round((1 - narrowPlan.recentSignalWeight) * 100)}%；${backtest.records.length}期回测，后${narrowPlan.validationSize}期留出验证`;
+  $('#algorithm-summary').textContent = `训练段自动选择近${narrowPlan.recommendationWindow}期权重${Math.round(narrowPlan.recentSignalWeight * 100)}%；内层${narrowPlan.weightValidationSize}期调权，后${narrowPlan.validationSize}期留出验证`;
   $('#algorithm-three-models').textContent = `${narrowCount}码：${names.map((name, position) => `${name.slice(0, 1)}${narrowPlan.modelNames[position]}`).join(' / ')}`;
   $('#algorithm-six-models').textContent = widePlan.alignedWithPl5
     ? '6码：排三3码核心 + 排五前三位3码 + 同模型补足'
@@ -734,9 +798,9 @@ function renderBacktestedRecommendation(count) {
   $('#ticket-cost').textContent = `${bets * 2}元`;
   $('#ticket-probability').textContent = `理论概率 ${(bets / (10 ** names.length) * 100).toFixed(3)}%`;
   $('#reason-list').innerHTML = names.map((name, position) => `<div class="reason-item"><strong>${name}：${plan.modelNames[position]}</strong><span>后${plan.validationSize}期完全留出分位覆盖率 ${(plan.validationPositionRates[position] * 100).toFixed(1)}%，该段未参与策略选择。</span></div>`).join('');
-  $('#recommend-date').textContent = `近${plan.recommendationWindow}期权重${Math.round(plan.recentSignalWeight * 100)}% · 回测${plan.trainSize + plan.validationSize}期 · 留出整注覆盖 ${(plan.validationRate * 100).toFixed(1)}% · 理论基线 ${(plan.baseline * 100).toFixed(1)}%`;
+  $('#recommend-date').textContent = `自动选择近${plan.recommendationWindow}期权重${Math.round(plan.recentSignalWeight * 100)}% · 内层${plan.weightValidationSize}期调权 · 外层${plan.validationSize}期整注覆盖 ${(plan.validationRate * 100).toFixed(1)}% · 理论基线 ${(plan.baseline * 100).toFixed(1)}%`;
   $('.model-controls h2').textContent = '冠军挑战集成';
-  $('.model-badge').textContent = '完全留出验证版';
+  $('.model-badge').textContent = '嵌套留出验证版';
   $('#generate-button').textContent = '重新回测';
   ['model-window', 'omit-weight', 'freq-weight', 'balance-toggle'].forEach((id) => { $(`#${id}`).disabled = true; });
 }
