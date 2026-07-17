@@ -14,12 +14,16 @@
 body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; letter-spacing: 0; }
 button, input, select { font: inherit; }
 button { cursor: pointer; }
-.topbar { height: 68px; display: grid; grid-template-columns: 250px 1fr 260px; align-items: center; padding: 0 24px; background: #202a33; color: white; border-bottom: 3px solid var(--red); }
+.topbar { height: 68px; display: grid; grid-template-columns: 330px 1fr 260px; align-items: center; padding: 0 24px; background: #202a33; color: white; border-bottom: 3px solid var(--red); }
 .brand { display: flex; align-items: center; gap: 11px; }
 .brand-mark { width: 34px; height: 34px; display: grid; place-items: center; background: var(--red); font-size: 22px; font-weight: 800; border-radius: 4px; }
 .brand strong, .brand small { display: block; }
 .brand strong { font-size: 17px; }
 .brand small { color: #aeb8c1; font-size: 11px; }
+.lottery-switch { margin-left: 8px; display: flex; border: 1px solid #52616c; border-radius: 4px; overflow: hidden; }
+.lottery-switch button { height: 30px; padding: 0 9px; border: 0; border-right: 1px solid #52616c; background: #28343e; color: #bfc8cf; font-size: 12px; white-space: nowrap; }
+.lottery-switch button:last-child { border-right: 0; }
+.lottery-switch button.active { background: #f2a33a; color: #202a33; font-weight: 700; }
 .topnav { align-self: stretch; display: flex; justify-content: center; gap: 6px; }
 .nav-item { min-width: 108px; padding: 0 18px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: #c6cdd3; }
 .nav-item:hover, .nav-item.active { color: white; background: #28343e; border-bottom-color: #f2a33a; }
@@ -61,6 +65,11 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .trend-table { position: relative; z-index: 1; width: max-content; min-width: 100%; }
 .chart-row { display: grid; grid-template-columns: 82px 76px repeat(50, 30px) repeat(6, 60px); min-height: 30px; border-bottom: 1px solid #edf0f2; }
 .chart-row.analysis-row { min-width: max-content; }
+.chart-row.stats-row { min-height: 34px; background: #f6f8f9; border-top: 1px solid #d7dde2; }
+.chart-row.stats-row .chart-cell { color: #4e5c67; font-variant-numeric: tabular-nums; }
+.chart-row.stats-row .fixed { color: #26343e; font-weight: 700; }
+.chart-row.stats-row.desire-row { background: #fff8e9; }
+.chart-row.stats-row.desire-row .chart-cell:not(.fixed) { color: #a7640b; font-weight: 700; }
 .chart-row.header { position: sticky; top: 0; z-index: 5; min-height: 52px; background: #f7f8f9; border-bottom-color: #cbd3d9; }
 .chart-cell { min-width: 0; display: grid; place-items: center; border-right: 1px solid #edf0f2; color: #9aa3aa; font-size: 11px; }
 .chart-cell.fixed { color: #52606b; background: #fafbfb; font-variant-numeric: tabular-nums; }
@@ -196,6 +205,11 @@ td.number { color: var(--red); font-weight: 800; letter-spacing: 4px; }
 @media (max-width: 760px) {
   .topbar { height: auto; min-height: 112px; grid-template-columns: 1fr auto; padding: 10px 14px 0; }
   .brand small { display: none; }
+  .brand { gap: 7px; }
+  .brand strong { font-size: 15px; }
+  .brand > div:nth-child(2) { display: none; }
+  .lottery-switch { margin-left: 2px; }
+  .lottery-switch button { padding: 0 6px; }
   .latest-mini { font-size: 11px; }
   .latest-mini strong { font-size: 17px; }
   .topnav { grid-column: 1 / -1; order: 3; height: 44px; justify-content: stretch; }

@@ -7,7 +7,10 @@ const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SNAPSHOT = path.join(__dirname, 'data', 'pl5-history.json');
-const DATA_URL = 'https://tb.tuganjue.com/api/pl5/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all';
+const DATA_URLS = {
+  pl3: 'https://tb.tuganjue.com/api/pl3/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all',
+  pl5: 'https://tb.tuganjue.com/api/pl5/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all'
+};
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -16,17 +19,23 @@ const MIME = {
   '.svg': 'image/svg+xml'
 };
 
-let cache = null;
-let cacheTime = 0;
+const caches = { pl3: null, pl5: null };
+const cacheTimes = { pl3: 0, pl5: 0 };
 
-function readSnapshot() {
-  const raw = JSON.parse(fs.readFileSync(SNAPSHOT, 'utf8'));
-  return raw.data?.data || raw.data || [];
+function normalizeDraw(draw, lottery) {
+  const count = lottery === 'pl3' ? 3 : 5;
+  const clean = String(draw.winnum || '').replace(/<[^>]*>/g, '').replace(/\D/g, '').slice(0, count).padStart(count, '0');
+  return { ...draw, winnum: clean.split('').join(' ') };
 }
 
-function fetchRemote() {
+function readSnapshot(lottery) {
+  const raw = JSON.parse(fs.readFileSync(SNAPSHOT, 'utf8'));
+  return (raw.data?.data || raw.data || []).map((draw) => normalizeDraw(draw, lottery));
+}
+
+function fetchRemote(lottery) {
   return new Promise((resolve, reject) => {
-    const request = https.get(DATA_URL, { timeout: 12000 }, (response) => {
+    const request = https.get(DATA_URLS[lottery], { timeout: 12000 }, (response) => {
       if (response.statusCode !== 200) {
         response.resume();
         reject(new Error(`HTTP ${response.statusCode}`));
@@ -38,7 +47,7 @@ function fetchRemote() {
       response.on('end', () => {
         try {
           const parsed = JSON.parse(body);
-          resolve(parsed.data?.data || []);
+          resolve((parsed.data?.data || []).map((draw) => normalizeDraw(draw, lottery)));
         } catch (error) {
           reject(error);
         }
@@ -49,21 +58,21 @@ function fetchRemote() {
   });
 }
 
-async function getDraws(force = false) {
-  if (!force && cache && Date.now() - cacheTime < 10 * 60 * 1000) return cache;
+async function getDraws(lottery, force = false) {
+  if (!force && caches[lottery] && Date.now() - cacheTimes[lottery] < 10 * 60 * 1000) return caches[lottery];
   try {
-    const remote = await fetchRemote();
+    const remote = await fetchRemote(lottery);
     if (remote.length) {
-      cache = remote;
-      cacheTime = Date.now();
+      caches[lottery] = remote;
+      cacheTimes[lottery] = Date.now();
       return remote;
     }
   } catch (_) {
     // The bundled snapshot keeps the tool usable during upstream downtime.
   }
-  cache = readSnapshot();
-  cacheTime = Date.now();
-  return cache;
+  caches[lottery] = readSnapshot(lottery);
+  cacheTimes[lottery] = Date.now();
+  return caches[lottery];
 }
 
 function sendJson(response, status, value) {
@@ -74,9 +83,10 @@ function sendJson(response, status, value) {
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
   if (url.pathname === '/api/draws') {
-    const draws = await getDraws(url.searchParams.get('refresh') === '1');
+    const lottery = url.searchParams.get('lottery') === 'pl3' ? 'pl3' : 'pl5';
+    const draws = await getDraws(lottery, url.searchParams.get('refresh') === '1');
     const limit = Math.min(10000, Math.max(20, Number(url.searchParams.get('limit') || 300)));
-    sendJson(response, 200, { updatedAt: new Date().toISOString(), total: draws.length, data: draws.slice(-limit) });
+    sendJson(response, 200, { lottery, updatedAt: new Date().toISOString(), total: draws.length, data: draws.slice(-limit) });
     return;
   }
 
@@ -97,5 +107,5 @@ const server = http.createServer(async (request, response) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`PL5 Trend Lab running on ${HOST}:${PORT}`);
+  console.log(`Lottery Trend Lab running on ${HOST}:${PORT}`);
 });

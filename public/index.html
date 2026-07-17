@@ -3,15 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="排列五历史走势、遗漏分析与每日统计推荐">
-  <title>排五研判台</title>
+  <meta name="description" content="排列三、排列五历史走势、遗漏分析与每日统计推荐">
+  <title>排列研判台</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="brand-mark">5</span>
-      <div><strong>排五研判台</strong><small>历史走势与概率分析</small></div>
+      <span class="brand-mark" id="brand-mark">5</span>
+      <div><strong id="app-title">排列研判台</strong><small>历史走势与概率分析</small></div>
+      <div class="lottery-switch" role="group" aria-label="彩种切换">
+        <button data-lottery="pl3">排列三</button><button class="active" data-lottery="pl5">排列五</button>
+      </div>
     </div>
     <nav class="topnav" aria-label="主导航">
       <button class="nav-item active" data-view="trend">走势分析</button>
@@ -98,7 +101,7 @@
       <section id="selector-view" class="view-panel">
         <div class="selector-toolbar">
           <div>
-            <h2>排列五选号工具</h2>
+            <h2 id="selector-title">排列五选号工具</h2>
             <p>按位置生成直选组合，实时计算注数、金额与理论概率</p>
           </div>
           <div class="mode-segments" role="group" aria-label="选号方式">
@@ -144,12 +147,12 @@
             <button id="reset-filters" class="secondary-button">重置条件</button>
           </div>
           <div class="filter-grid">
-            <article class="filter-item filter-range"><strong>和值</strong><div><input id="sum-min" type="number" min="0" max="45" placeholder="最小"><span>至</span><input id="sum-max" type="number" min="0" max="45" placeholder="最大"></div><small>5位数字之和，范围0-45</small></article>
+            <article class="filter-item filter-range"><strong>和值</strong><div><input id="sum-min" type="number" min="0" max="45" placeholder="最小"><span>至</span><input id="sum-max" type="number" min="0" max="45" placeholder="最大"></div><small id="sum-filter-help">5位数字之和，范围0-45</small></article>
             <article class="filter-item filter-range"><strong>跨度</strong><div><input id="span-min" type="number" min="0" max="9" placeholder="最小"><span>至</span><input id="span-max" type="number" min="0" max="9" placeholder="最大"></div><small>最大号与最小号之差</small></article>
             <article class="filter-item"><strong>奇数个数</strong><div class="filter-options" data-filter="oddCounts"></div></article>
             <article class="filter-item"><strong>大号个数</strong><div class="filter-options" data-filter="bigCounts"></div><small>5-9为大号</small></article>
             <article class="filter-item"><strong>质数个数</strong><div class="filter-options" data-filter="primeCounts"></div><small>1、2、3、5、7按质数统计</small></article>
-            <article class="filter-item"><strong>不同号个数</strong><div class="filter-options" data-filter="distinctCounts" data-start="1"></div><small>5表示五个数字全不同</small></article>
+            <article class="filter-item"><strong>不同号个数</strong><div class="filter-options" data-filter="distinctCounts" data-start="1"></div><small id="distinct-filter-help">5表示五个数字全不同</small></article>
             <article class="filter-item"><strong>0路个数</strong><div class="filter-options" data-filter="route0Counts"></div><small>0、3、6、9</small></article>
             <article class="filter-item"><strong>1路个数</strong><div class="filter-options" data-filter="route1Counts"></div><small>1、4、7</small></article>
             <article class="filter-item"><strong>2路个数</strong><div class="filter-options" data-filter="route2Counts"></div><small>2、5、8</small></article>

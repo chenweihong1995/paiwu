@@ -1,12 +1,17 @@
-const state = { draws: [], periods: 50, mode: 'position', lines: true, view: 'trend' };
-const positionNames = ['万位', '千位', '百位', '十位', '个位'];
-const trendModes = [
-  ['position', '定位走势', '位'], ['draw', '开奖走势', '开'], ['route', '012路走势', '路'],
+const state = { lottery: 'pl5', draws: [], periods: 50, mode: 'position', lines: true, view: 'trend' };
+let positionNames = ['万位', '千位', '百位', '十位', '个位'];
+let trendModes = [];
+const baseTrendModes = [
+  ['position', '定位走势', '位'], ['draw', '开奖走势', '开'],
   ['odd', '奇偶走势', '奇'], ['size', '大小走势', '大'], ['zone', '大中小走势', '区'],
   ['sum', '和值走势', '和'], ['tail', '和尾走势', '尾'], ['span', '跨度走势', '跨'],
   ['prime', '质合走势', '质'], ['updown', '升平降走势', '升'], ['max', '最大号走势', '高'],
   ['min', '最小号走势', '低'], ['sequence', '连号走势', '连'], ['amplitude', '振幅走势', '振']
 ];
+const routeModes = {
+  pl3: [['route-main', '012路走势图', '路'], ['route-digits', '012走势图2', '数'], ['route-direct', '012路直选图', '直']],
+  pl5: [['route-main', '012路走势图', '路'], ['route-digits', '012走势图2', '数'], ['route-front4', '前四012', '前'], ['route-back4', '后四012', '后']]
+};
 const selectorState = {
   mode: 'compound',
   picks: Array.from({ length: 5 }, () => new Set()),
@@ -20,9 +25,16 @@ const selectorState = {
 };
 
 const $ = (selector) => document.querySelector(selector);
-const digits = (draw) => String(draw.winnum).replace(/\s/g, '').padStart(5, '0').split('').map(Number);
+const digitCount = () => state.lottery === 'pl3' ? 3 : 5;
+const lotteryName = () => state.lottery === 'pl3' ? '排列三' : '排列五';
+const digits = (draw) => String(draw?.winnum || '').replace(/<[^>]*>/g, '').replace(/\D/g, '').slice(0, digitCount()).padStart(digitCount(), '0').split('').map(Number);
 const sum = (values) => values.reduce((a, b) => a + b, 0);
 const isPrime = (n) => [1, 2, 3, 5, 7].includes(n);
+
+function refreshLotteryConfig() {
+  positionNames = state.lottery === 'pl3' ? ['百位', '十位', '个位'] : ['万位', '千位', '百位', '十位', '个位'];
+  trendModes = [...baseTrendModes.slice(0, 2), ...routeModes[state.lottery], ...baseTrendModes.slice(2)];
+}
 
 function metrics(draw, previous) {
   const ds = digits(draw);
@@ -33,7 +45,7 @@ function metrics(draw, previous) {
   const prev = previous ? digits(previous) : ds;
   return {
     ds, total, tail: total % 10, span: Math.max(...ds) - Math.min(...ds),
-    odd: `${odd}:${5 - odd}`, big: `${big}:${5 - big}`, route: ds.map((n) => n % 3).join(''),
+    odd: `${odd}:${ds.length - odd}`, big: `${big}:${ds.length - big}`, route: ds.map((n) => n % 3).join(''),
     routeCount: routes.join(':'), zone: ds.map((n) => n <= 2 ? '小' : n <= 6 ? '中' : '大').join(''),
     prime: `${ds.filter(isPrime).length}:${ds.filter((n) => !isPrime(n)).length}`,
     updown: ds.map((n, i) => n > prev[i] ? '升' : n < prev[i] ? '降' : '平').join(''),
@@ -55,11 +67,11 @@ function buildMenu() {
 }
 
 function calculateOmits(draws) {
-  const omit = Array.from({ length: 5 }, () => Array(10).fill(0));
+  const omit = Array.from({ length: digitCount() }, () => Array(10).fill(0));
   return draws.map((draw) => {
     const ds = digits(draw);
     const row = omit.map((position, p) => position.map((value, n) => n === ds[p] ? 0 : value + 1));
-    for (let p = 0; p < 5; p++) omit[p] = row[p].slice();
+    for (let p = 0; p < digitCount(); p++) omit[p] = row[p].slice();
     return row;
   });
 }
@@ -69,7 +81,7 @@ function renderSummary(selected) {
   const prev = selected[selected.length - 2];
   if (!latest) return;
   const m = metrics(latest, prev);
-  const values = [['期号', latest.issue, latest.kjdate], ['开奖号码', m.ds.join(' '), '直选'], ['和值 / 和尾', `${m.total} / ${m.tail}`, m.total >= 23 ? '大' : '小'], ['跨度', m.span, m.span >= 5 ? '大' : '小'], ['012路', m.route, m.routeCount], ['奇偶 / 大小', m.odd, m.big]];
+  const values = [['期号', latest.issue, latest.kjdate], ['开奖号码', m.ds.join(' '), '直选'], ['和值 / 和尾', `${m.total} / ${m.tail}`, m.total >= digitCount() * 4.5 ? '大' : '小'], ['跨度', m.span, m.span >= 5 ? '大' : '小'], ['012路', m.route, m.routeCount], ['奇偶 / 大小', m.odd, m.big]];
   $('#summary-strip').innerHTML = values.map(([label, value, sub]) => `<div class="summary-item"><span>${label}</span><strong>${value}</strong><em>${sub}</em></div>`).join('');
 }
 
@@ -77,10 +89,10 @@ function extraMetrics(draw, previous) {
   const m = metrics(draw, previous);
   const map = {
     position: [m.total, m.span, m.route, m.odd, m.big, m.prime], draw: [m.total, m.tail, m.span, m.odd, m.big, m.routeCount],
-    route: [m.route, m.routeCount, m.total % 3, m.tail % 3, m.span % 3, ''], odd: [m.odd, m.ds.map(n => n % 2 ? '奇' : '偶').join(''), m.total % 2 ? '奇' : '偶', m.tail % 2 ? '奇' : '偶', '', ''],
-    size: [m.big, m.ds.map(n => n >= 5 ? '大' : '小').join(''), m.total >= 23 ? '大' : '小', m.span >= 5 ? '大' : '小', '', ''],
+    odd: [m.odd, m.ds.map(n => n % 2 ? '奇' : '偶').join(''), m.total % 2 ? '奇' : '偶', m.tail % 2 ? '奇' : '偶', '', ''],
+    size: [m.big, m.ds.map(n => n >= 5 ? '大' : '小').join(''), m.total >= digitCount() * 4.5 ? '大' : '小', m.span >= 5 ? '大' : '小', '', ''],
     zone: [m.zone, m.ds.filter(n => n <= 2).length, m.ds.filter(n => n >= 3 && n <= 6).length, m.ds.filter(n => n >= 7).length, '', ''],
-    sum: [m.total, m.total >= 23 ? '大' : '小', m.total % 2 ? '奇' : '偶', m.total % 3, m.tail, ''], tail: [m.tail, m.tail >= 5 ? '大' : '小', m.tail % 2 ? '奇' : '偶', m.tail % 3, '', ''],
+    sum: [m.total, m.total >= digitCount() * 4.5 ? '大' : '小', m.total % 2 ? '奇' : '偶', m.total % 3, m.tail, ''], tail: [m.tail, m.tail >= 5 ? '大' : '小', m.tail % 2 ? '奇' : '偶', m.tail % 3, '', ''],
     span: [m.span, m.span >= 5 ? '大' : '小', m.span % 2 ? '奇' : '偶', m.span % 3, '', ''], prime: [m.prime, m.ds.map(n => isPrime(n) ? '质' : '合').join(''), '', '', '', ''],
     updown: [m.updown, '', '', '', '', ''], max: [m.max, m.max % 3, m.max % 2 ? '奇' : '偶', '', '', ''], min: [m.min, m.min % 3, m.min % 2 ? '奇' : '偶', '', '', ''],
     sequence: [m.sequence, '', '', '', '', ''], amplitude: [m.amplitude, '', '', '', '', '']
@@ -94,14 +106,13 @@ function analysisDefinition(mode) {
   });
   const single = (name, categories, value) => ({ groups: [{ name, categories, value }] });
   const definitions = {
-    route: positional(['0路', '1路', '2路'], (n) => `${n % 3}路`),
     odd: positional(['偶', '奇'], (n) => n % 2 ? '奇' : '偶'),
     size: positional(['小', '大'], (n) => n >= 5 ? '大' : '小'),
     zone: positional(['小', '中', '大'], (n) => n <= 2 ? '小' : n <= 6 ? '中' : '大'),
     prime: positional(['合', '质'], (n) => isPrime(n) ? '质' : '合'),
     updown: positional(['升', '平', '降'], (n, prev) => n > prev ? '升' : n < prev ? '降' : '平'),
     amplitude: positional(Array.from({ length: 10 }, (_, n) => String(n)), (n, prev) => String(Math.abs(n - prev))),
-    sum: single('和值', Array.from({ length: 46 }, (_, n) => String(n)), (draw) => String(sum(digits(draw)))),
+    sum: single('和值', Array.from({ length: digitCount() * 9 + 1 }, (_, n) => String(n)), (draw) => String(sum(digits(draw)))),
     tail: single('和尾', Array.from({ length: 10 }, (_, n) => String(n)), (draw) => String(sum(digits(draw)) % 10)),
     span: single('跨度', Array.from({ length: 10 }, (_, n) => String(n)), (draw) => {
       const ds = digits(draw); return String(Math.max(...ds) - Math.min(...ds));
@@ -111,6 +122,110 @@ function analysisDefinition(mode) {
     sequence: single('连号', ['无', '有'], (draw) => metrics(draw).sequence)
   };
   return definitions[mode];
+}
+
+const routeDigitOrder = ['0', '3', '6', '9', '1', '4', '7', '2', '5', '8'];
+const pl3ShapeMap = { '003': 'A', '012': 'B', '021': 'C', '030': 'D', '102': 'E', '111': 'F', '120': 'G', '201': 'H', '210': 'I', '300': 'J' };
+const pl5Distributions = ['500', '410', '401', '320', '311', '302', '230', '221', '212', '203', '140', '131', '122', '113', '104', '050', '041', '032', '023', '014', '005'];
+const directRoutes = Array.from({ length: 27 }, (_, index) => index.toString(3).padStart(3, '0'));
+const isRouteMode = (mode) => mode.startsWith('route-');
+
+function routeCounts(draw, positions) {
+  const ds = digits(draw);
+  return [0, 1, 2].map((route) => positions.filter((position) => ds[position] % 3 === route).length);
+}
+
+function routeDefinition(mode) {
+  const allPositions = positionNames.map((_, index) => index);
+  const positions = mode === 'route-front4' ? allPositions.slice(0, 4) : mode === 'route-back4' ? allPositions.slice(-4) : allPositions;
+  const positional = (categories, value) => positions.map((position) => ({
+    name: positionNames[position], categories, value: (draw) => value(digits(draw)[position])
+  }));
+  const countGroups = [0, 1, 2].map((route) => ({
+    name: `${route}码个数`, categories: Array.from({ length: positions.length + 1 }, (_, n) => String(n)),
+    value: (draw) => String(routeCounts(draw, positions)[route])
+  }));
+  if (mode === 'route-digits') {
+    return { groups: [
+      ...positional(routeDigitOrder, (digit) => String(digit)), ...countGroups,
+      { name: '组选012图', categories: routeDigitOrder, value: (draw) => [...new Set(digits(draw).map(String))] }
+    ] };
+  }
+  const groups = [...positional(['0路', '1路', '2路'], (digit) => `${digit % 3}路`)];
+  if (mode !== 'route-direct') groups.push(...countGroups);
+  if (mode === 'route-front4' || mode === 'route-back4') return { groups };
+  if (state.lottery === 'pl3') {
+    groups.push({ name: '整体形态', categories: 'ABCDEFGHIJ'.split(''), value: (draw) => pl3ShapeMap[routeCounts(draw, positions).join('')] });
+    if (mode === 'route-direct') groups.push({ name: '直选012分布', categories: directRoutes, value: (draw) => digits(draw).map((n) => n % 3).join('') });
+  } else {
+    groups.push({ name: '整体形态', categories: ['A', 'B', 'C'], value: (draw) => String(routeCounts(draw, positions).filter(Boolean).length).replace('1', 'A').replace('2', 'B').replace('3', 'C') });
+    groups.push({ name: '路数分布', categories: pl5Distributions, value: (draw) => routeCounts(draw, positions).join('') });
+  }
+  return { groups };
+}
+
+function omissionStats(hits) {
+  const indices = hits.map((hit, index) => hit ? index : -1).filter((index) => index >= 0);
+  if (!indices.length) return { frequency: 0, current: hits.length, previous: hits.length, average: hits.length, maximum: hits.length };
+  const gaps = [indices[0], ...indices.slice(1).map((index, i) => index - indices[i] - 1)];
+  const current = hits.length - indices[indices.length - 1] - 1;
+  return {
+    frequency: indices.length,
+    current,
+    previous: gaps[gaps.length - 1],
+    average: gaps.reduce((total, gap) => total + gap, 0) / gaps.length,
+    maximum: Math.max(current, ...gaps)
+  };
+}
+
+function renderRouteTrend(selected) {
+  const definition = routeDefinition(state.mode);
+  const columns = definition.groups.reduce((count, group) => count + group.categories.length, 0);
+  const template = `82px 76px repeat(${columns}, 38px) 76px`;
+  const omissions = definition.groups.map((group) => Object.fromEntries(group.categories.map((category) => [category, 0])));
+  const hitHistory = definition.groups.map((group) => Object.fromEntries(group.categories.map((category) => [category, []])));
+  const rows = state.draws.map((draw) => definition.groups.map((group, groupIndex) => {
+    const raw = group.value(draw);
+    const hits = new Set((Array.isArray(raw) ? raw : [raw]).map(String));
+    const values = {};
+    group.categories.forEach((category) => {
+      const hit = hits.has(category);
+      hitHistory[groupIndex][category].push(hit);
+      omissions[groupIndex][category] = hit ? 0 : omissions[groupIndex][category] + 1;
+      values[category] = omissions[groupIndex][category];
+    });
+    return { hits, values };
+  }));
+  const selectedRows = rows.slice(-selected.length);
+  let html = `<div class="chart-row analysis-row header" style="grid-template-columns:${template}"><div class="chart-cell fixed">期号</div><div class="chart-cell fixed">日期</div>`;
+  definition.groups.forEach((group) => group.categories.forEach((category, index) => {
+    html += `<div class="chart-cell ${index === group.categories.length - 1 ? 'group-end' : ''}">${group.name}<br>${category}</div>`;
+  }));
+  html += '<div class="chart-cell metric-cell">开奖号</div></div>';
+  selected.forEach((draw, rowIndex) => {
+    html += `<div class="chart-row analysis-row" style="grid-template-columns:${template}"><div class="chart-cell fixed">${draw.issue}</div><div class="chart-cell fixed">${String(draw.kjdate).slice(5)}</div>`;
+    definition.groups.forEach((group, groupIndex) => group.categories.forEach((category, categoryIndex) => {
+      const row = selectedRows[rowIndex][groupIndex];
+      const hit = row.hits.has(category);
+      html += `<div class="chart-cell pos-${groupIndex % 5 + 1} ${hit ? 'hit' : ''} ${categoryIndex === group.categories.length - 1 ? 'group-end' : ''}">${hit ? category.replace('路', '') : row.values[category]}</div>`;
+    }));
+    html += `<div class="chart-cell metric-cell draw-number">${digits(draw).join('')}</div></div>`;
+  });
+  const summaries = [
+    ['出现次数', 'frequency'], ['当前遗漏', 'current'], ['上期遗漏', 'previous'],
+    ['平均遗漏', 'average'], ['最大遗漏', 'maximum'], ['欲出几率', 'desire']
+  ];
+  summaries.forEach(([label, key]) => {
+    html += `<div class="chart-row analysis-row stats-row ${key === 'desire' ? 'desire-row' : ''}" style="grid-template-columns:${template}"><div class="chart-cell fixed">${label}</div><div class="chart-cell fixed">全历史</div>`;
+    definition.groups.forEach((group, groupIndex) => group.categories.forEach((category, categoryIndex) => {
+      const stats = omissionStats(hitHistory[groupIndex][category]);
+      const value = key === 'average' ? stats.average.toFixed(1) : key === 'desire' ? `${Math.round(stats.current / Math.max(stats.average, 1) * 100)}%` : stats[key];
+      html += `<div class="chart-cell ${categoryIndex === group.categories.length - 1 ? 'group-end' : ''}">${value}</div>`;
+    }));
+    html += '<div class="chart-cell metric-cell">-</div></div>';
+  });
+  $('#trend-table').innerHTML = html;
+  requestAnimationFrame(drawLines);
 }
 
 function renderAnalysisTrend(selected) {
@@ -155,9 +270,14 @@ function renderAnalysisTrend(selected) {
 function renderTrend() {
   const selected = state.draws.slice(-state.periods);
   const currentMode = trendModes.find(([id]) => id === state.mode);
+  if (!currentMode) { state.mode = 'position'; return renderTrend(); }
   $('#view-title').textContent = currentMode[1];
-  $('#view-subtitle').textContent = `近${state.periods}期 · 分位号码与${currentMode[1].replace('走势', '')}指标`;
+  $('#view-subtitle').textContent = `${lotteryName()} · 近${selected.length}期 · ${isRouteMode(state.mode) ? '含全历史遗漏汇总' : `分位号码与${currentMode[1].replace('走势', '')}指标`}`;
   renderSummary(selected);
+  if (isRouteMode(state.mode)) {
+    renderRouteTrend(selected);
+    return;
+  }
   if (state.mode !== 'position' && state.mode !== 'draw') {
     renderAnalysisTrend(selected);
     return;
@@ -165,14 +285,16 @@ function renderTrend() {
   const omits = calculateOmits(state.draws).slice(-state.periods);
   const labels = { position: ['和值', '跨度', '012', '奇偶', '大小', '质合'], draw: ['和值', '和尾', '跨度', '奇偶', '大小', '路比'] };
   let html = '<div class="chart-row header"><div class="chart-cell fixed">期号</div><div class="chart-cell fixed">日期</div>';
-  for (let p = 0; p < 5; p++) for (let n = 0; n < 10; n++) html += `<div class="chart-cell ${n === 9 ? 'group-end' : ''}">${p === 0 ? positionNames[p] : positionNames[p]}<br>${n}</div>`;
+  const template = `82px 76px repeat(${digitCount() * 10}, 30px) repeat(6, 60px)`;
+  html = `<div class="chart-row header" style="grid-template-columns:${template}"><div class="chart-cell fixed">期号</div><div class="chart-cell fixed">日期</div>`;
+  for (let p = 0; p < digitCount(); p++) for (let n = 0; n < 10; n++) html += `<div class="chart-cell ${n === 9 ? 'group-end' : ''}">${positionNames[p]}<br>${n}</div>`;
   html += (labels[state.mode] || labels.position).map((x) => `<div class="chart-cell metric-cell">${x}</div>`).join('') + '</div>';
   selected.forEach((draw, index) => {
     const ds = digits(draw);
     const rowOmits = omits[index];
     const previous = index ? selected[index - 1] : null;
-    html += `<div class="chart-row"><div class="chart-cell fixed">${draw.issue}</div><div class="chart-cell fixed">${String(draw.kjdate).slice(5)}</div>`;
-    for (let p = 0; p < 5; p++) for (let n = 0; n < 10; n++) {
+    html += `<div class="chart-row" style="grid-template-columns:${template}"><div class="chart-cell fixed">${draw.issue}</div><div class="chart-cell fixed">${String(draw.kjdate).slice(5)}</div>`;
+    for (let p = 0; p < digitCount(); p++) for (let n = 0; n < 10; n++) {
       const hit = ds[p] === n;
       html += `<div class="chart-cell pos-${p + 1} ${hit ? 'hit' : ''} ${n === 9 ? 'group-end' : ''}">${hit ? n : rowOmits[p][n]}</div>`;
     }
@@ -192,7 +314,7 @@ function drawLines() {
   if (!state.lines || (state.mode !== 'position' && state.mode !== 'draw')) return;
   const left = 158, top = 52, rowH = 30, cellW = 30, colors = ['#d7473f', '#2f6ea4', '#167b78', '#b57718', '#7659a5'];
   const selected = state.draws.slice(-state.periods);
-  for (let p = 0; p < 5; p++) {
+  for (let p = 0; p < digitCount(); p++) {
     ctx.beginPath(); ctx.strokeStyle = colors[p]; ctx.lineWidth = 1.5; ctx.globalAlpha = .5;
     selected.forEach((draw, i) => {
       const x = left + p * 300 + digits(draw)[p] * cellW + cellW / 2;
@@ -220,7 +342,7 @@ function generateRecommendation() {
   const random = seededNoise(Number(today.replaceAll('-', '')));
   const picks = [];
   const reasons = [];
-  for (let p = 0; p < 5; p++) {
+  for (let p = 0; p < digitCount(); p++) {
     const frequency = Array(10).fill(0);
     sample.forEach((draw) => frequency[digits(draw)[p]]++);
     const omission = Array(10).fill(0);
@@ -244,12 +366,13 @@ function generateRecommendation() {
     const lead = scored[0].n;
     reasons.push(`<div class="reason-item"><strong>${positionNames[p]}：${chosen.join('、')}</strong><span>${lead}综合分最高；该位当前遗漏${omission[lead]}期，近${windowSize}期出现${frequency[lead]}次。</span></div>`);
   }
+  $('#number-picks').style.gridTemplateColumns = `repeat(${digitCount()}, minmax(90px, 1fr))`;
   $('#number-picks').innerHTML = picks.map((list, index) => `<div class="pick-column"><h3>${positionNames[index]}</h3><div class="pick-digits">${list.map((n) => `<span class="pick-digit">${n}</span>`).join('')}</div></div>`).join('');
-  const bets = count ** 5;
+  const bets = count ** digitCount();
   $('#ticket-code').textContent = picks.map((list) => list.join('')).join('-');
   $('#ticket-bets').textContent = `${bets}注`;
   $('#ticket-cost').textContent = `${bets * 2}元`;
-  $('#ticket-probability').textContent = `理论概率 ${(bets / 1000).toFixed(3)}%`;
+  $('#ticket-probability').textContent = `理论概率 ${(bets / (10 ** digitCount()) * 100).toFixed(3)}%`;
   $('#reason-list').innerHTML = reasons.join('');
   $('#recommend-date').textContent = `${today} · 基于最新${windowSize}期统计，今日重复计算结果保持一致`;
 }
@@ -361,14 +484,14 @@ function updateTicketCalculator() {
 
   $('#calc-bets').textContent = `${bets.toLocaleString()}注`;
   $('#calc-cost').textContent = `${cost.toLocaleString()}元`;
-  $('#calc-probability').textContent = `${(bets / 1000).toFixed(bets ? 3 : 0)}%`;
-  $('#calc-prize').textContent = `${(100000 * multiple).toLocaleString()}元`;
+  $('#calc-probability').textContent = `${(bets / (10 ** digitCount()) * 100).toFixed(bets ? 3 : 0)}%`;
+  $('#calc-prize').textContent = `${((state.lottery === 'pl3' ? 1040 : 100000) * multiple).toLocaleString()}元`;
   $('#budget-hint').textContent = `当前预算最多可买${Math.floor(budget / (2 * multiple)).toLocaleString()}注（${multiple}倍）`;
   const generatedDan = selectorState.mode === 'dantuo' && selectorState.generatedTickets.length;
   $('#ticket-notation').textContent = totals.complete ? (selectorState.mode === 'filter' ? '条件缩水' : generatedDan ? '胆码机选' : notation) : '--';
   $('#preview-summary').textContent = totals.valid
     ? `共${bets.toLocaleString()}注，${bets > combinations.items.length ? `显示前${combinations.items.length}注` : '已全部展开'}`
-    : '请为五个位置选择号码';
+    : `请为${digitCount()}个位置选择号码`;
   $('#combination-list').innerHTML = combinations.items.length
     ? combinations.items.map((number) => `<span class="combination-number">${number}</span>`).join('')
     : `<span class="combination-empty">${totals.valid && selectorState.mode === 'filter' ? '当前条件没有保留任何号码，请放宽条件。' : '完成选号后，这里会展开每一注单式号码。'}</span>`;
@@ -384,16 +507,18 @@ function updateTicketCalculator() {
     const emptyPositions = positionNames.filter((_, index) => selectorState.picks[index].size === 0);
     warning = `胆码已选：可直接设置机选注数，或手动选择${emptyPositions.join('、')}的拖码。`;
   }
-  else if (!totals.complete) warning = '五个位置都至少需要选1个号码。';
+  else if (!totals.complete) warning = `${digitCount()}个位置都至少需要选1个号码。`;
   else if (selectorState.mode === 'filter' && bets === 0) warning = '当前条件互相冲突，筛选结果为0注。';
   else if (cost > budget) warning = `当前金额超出预算${(cost - budget).toLocaleString()}元，可减少号码或倍数。`;
   else if (generatedDan) warning = `已按胆码生成${bets}注不重复号码；重新手选会清除本次机选结果。`;
-  else if (totals.valid) warning = `预算剩余${(budget - cost).toLocaleString()}元；理论概率仅按覆盖${bets.toLocaleString()}个五位数计算。`;
+  else if (totals.valid) warning = `预算剩余${(budget - cost).toLocaleString()}元；理论概率仅按覆盖${bets.toLocaleString()}个${digitCount()}位数计算。`;
   $('#selector-warning').textContent = warning;
   $('#copy-ticket').disabled = !totals.valid || bets === 0;
 }
 
 function renderSelector() {
+  $('#selector-title').textContent = `${lotteryName()}选号工具`;
+  $('#position-selector').style.gridTemplateColumns = `repeat(${digitCount()}, minmax(132px, 1fr))`;
   document.querySelectorAll('.mode-button').forEach((button) => button.classList.toggle('active', button.dataset.pickMode === selectorState.mode));
   $('#filter-panel').classList.toggle('active', selectorState.mode === 'filter');
   $('#random-count-wrap').classList.toggle('show', selectorState.mode === 'dantuo');
@@ -419,10 +544,8 @@ function renderFilterPanel() {
       return;
     }
     const start = Number(group.dataset.start || 0);
-    if (!group.children.length) {
-      group.innerHTML = Array.from({ length: 6 - start }, (_, index) => index + start)
-        .map((value) => `<button data-value="${value}">${value}</button>`).join('');
-    }
+    group.innerHTML = Array.from({ length: digitCount() + 1 - start }, (_, index) => index + start)
+      .map((value) => `<button data-value="${value}">${value}</button>`).join('');
     group.querySelectorAll('button').forEach((button) => button.classList.toggle('active', selectorState.filters[filter].has(Number(button.dataset.value))));
   });
 }
@@ -432,7 +555,7 @@ function setSelectorMode(mode) {
   selectorState.mode = mode;
   if (mode !== 'dantuo') selectorState.locked.fill(false);
   if (mode === 'filter' && !selectorState.filterInitialized) {
-    selectorState.picks = Array.from({ length: 5 }, () => new Set(Array.from({ length: 10 }, (_, digit) => digit)));
+    selectorState.picks = Array.from({ length: digitCount() }, () => new Set(Array.from({ length: 10 }, (_, digit) => digit)));
     selectorState.filterInitialized = true;
   }
   if (mode === 'single') {
@@ -508,7 +631,7 @@ function copyTicketNotation() {
   if (!calculation.total) return;
   const listedNumbers = selectorState.mode === 'filter' || copyGenerated ? `\n${calculation.items.join(' ')}` : '';
   const ticketType = selectorState.mode === 'filter' ? '条件缩水' : copyGenerated ? '胆码机选' : notation;
-  const text = `排列五 ${ticketType} ${normalizedMultiple()}倍，共${calculation.total}注${calculation.total * 2 * normalizedMultiple()}元${listedNumbers}`;
+  const text = `${lotteryName()} ${ticketType} ${normalizedMultiple()}倍，共${calculation.total}注${calculation.total * 2 * normalizedMultiple()}元${listedNumbers}`;
   const fallback = () => {
     const area = document.createElement('textarea');
     area.value = text; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove();
@@ -559,7 +682,7 @@ function applyCustomPeriod() {
 async function loadData(refresh = false) {
   $('#refresh-button').disabled = true;
   try {
-    const response = await fetch(`/api/draws?limit=10000${refresh ? '&refresh=1' : ''}`);
+    const response = await fetch(`/api/draws?lottery=${state.lottery}&limit=10000${refresh ? '&refresh=1' : ''}`);
     const result = await response.json();
     state.draws = result.data;
     $('#custom-period').max = state.draws.length;
@@ -574,7 +697,33 @@ async function loadData(refresh = false) {
   } finally { $('#refresh-button').disabled = false; }
 }
 
+async function switchLottery(lottery) {
+  if (lottery === state.lottery) return;
+  state.lottery = lottery;
+  refreshLotteryConfig();
+  if (!trendModes.some(([id]) => id === state.mode)) state.mode = 'position';
+  selectorState.picks = Array.from({ length: digitCount() }, () => new Set());
+  selectorState.locked = Array(digitCount()).fill(false);
+  selectorState.generatedTickets = [];
+  selectorState.filterInitialized = false;
+  Object.values(selectorState.filters).forEach((value) => { if (value instanceof Set) value.clear(); });
+  selectorState.filters.consecutive = 'any';
+  document.querySelectorAll('[data-lottery]').forEach((button) => button.classList.toggle('active', button.dataset.lottery === lottery));
+  $('#brand-mark').textContent = lottery === 'pl3' ? '3' : '5';
+  document.title = `${lotteryName()}研判台`;
+  $('#sum-min').max = digitCount() * 9;
+  $('#sum-max').max = digitCount() * 9;
+  $('#sum-filter-help').textContent = `${digitCount()}位数字之和，范围0-${digitCount() * 9}`;
+  $('#distinct-filter-help').textContent = `${digitCount()}表示${digitCount()}个数字全不同`;
+  buildMenu();
+  renderSelector();
+  await loadData();
+  showView(state.view);
+}
+
+refreshLotteryConfig();
 buildMenu();
+document.querySelectorAll('[data-lottery]').forEach((button) => button.addEventListener('click', () => switchLottery(button.dataset.lottery)));
 document.querySelectorAll('.nav-item').forEach((button) => button.addEventListener('click', () => showView(button.dataset.view)));
 $('#period-select').addEventListener('change', (event) => {
   const value = event.target.value;
@@ -630,11 +779,11 @@ $('#select-all-pick').addEventListener('click', () => {
     ? new Set(pick)
     : new Set(allDigits));
   renderSelector();
-  toast(selectorState.mode === 'dantuo' ? '拖码位置已全选' : '五个位置已全选');
+  toast(selectorState.mode === 'dantuo' ? '拖码位置已全选' : `${digitCount()}个位置已全选`);
 });
 $('#clear-pick').addEventListener('click', () => {
   selectorState.generatedTickets = [];
-  selectorState.picks = Array.from({ length: 5 }, () => new Set());
+  selectorState.picks = Array.from({ length: digitCount() }, () => new Set());
   renderSelector();
   toast('已清空选号');
 });
