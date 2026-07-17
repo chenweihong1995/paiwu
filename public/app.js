@@ -367,8 +367,13 @@ function updateTicketCalculator() {
   $('#filter-keep-rate').textContent = totals.bets ? `${(bets / totals.bets * 100).toFixed(2)}%` : '0%';
 
   let warning = '每注2元，倍数只放大金额和返奖，不提高单注概率。';
-  if (!totals.complete) warning = '五个位置都至少需要选1个号码。';
-  else if (selectorState.mode === 'dantuo' && !totals.hasDan) warning = '定位胆拖至少需要锁定1个位置作为胆码。';
+  if (selectorState.mode === 'dantuo' && !totals.hasDan) warning = '请先点击某个位置的“设胆”，再选1个胆码。';
+  else if (selectorState.mode === 'dantuo' && !totals.validDan) warning = '每个胆码位置只能选1个号码。';
+  else if (selectorState.mode === 'dantuo' && !totals.complete) {
+    const emptyPositions = positionNames.filter((_, index) => selectorState.picks[index].size === 0);
+    warning = `胆码已选，请继续选择${emptyPositions.join('、')}的拖码。`;
+  }
+  else if (!totals.complete) warning = '五个位置都至少需要选1个号码。';
   else if (selectorState.mode === 'filter' && bets === 0) warning = '当前条件互相冲突，筛选结果为0注。';
   else if (cost > budget) warning = `当前金额超出预算${(cost - budget).toLocaleString()}元，可减少号码或倍数。`;
   else if (totals.valid) warning = `预算剩余${(budget - cost).toLocaleString()}元；理论概率仅按覆盖${bets.toLocaleString()}个五位数计算。`;
