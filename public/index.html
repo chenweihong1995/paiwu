@@ -105,8 +105,10 @@
             <button class="mode-button active" data-pick-mode="compound">直选复式</button>
             <button class="mode-button" data-pick-mode="single">单式自选</button>
             <button class="mode-button" data-pick-mode="dantuo">定位胆拖</button>
+            <button class="mode-button" data-pick-mode="filter">条件缩水</button>
           </div>
           <div class="selector-actions">
+            <button id="select-all-pick" class="secondary-button">全选</button>
             <button id="random-pick" class="secondary-button">机选</button>
             <button id="clear-pick" class="secondary-button">清空</button>
           </div>
@@ -134,6 +136,26 @@
             <p id="selector-warning">每注2元，倍数只放大金额和返奖，不提高中奖概率。</p>
           </aside>
         </div>
+
+        <section id="filter-panel" class="filter-panel" aria-label="条件缩水指标">
+          <div class="filter-heading">
+            <div><h2>过滤指标</h2><p>条件可叠加，点击数值可多选</p></div>
+            <button id="reset-filters" class="secondary-button">重置条件</button>
+          </div>
+          <div class="filter-grid">
+            <article class="filter-item filter-range"><strong>和值</strong><div><input id="sum-min" type="number" min="0" max="45" placeholder="最小"><span>至</span><input id="sum-max" type="number" min="0" max="45" placeholder="最大"></div><small>5位数字之和，范围0-45</small></article>
+            <article class="filter-item filter-range"><strong>跨度</strong><div><input id="span-min" type="number" min="0" max="9" placeholder="最小"><span>至</span><input id="span-max" type="number" min="0" max="9" placeholder="最大"></div><small>最大号与最小号之差</small></article>
+            <article class="filter-item"><strong>奇数个数</strong><div class="filter-options" data-filter="oddCounts"></div></article>
+            <article class="filter-item"><strong>大号个数</strong><div class="filter-options" data-filter="bigCounts"></div><small>5-9为大号</small></article>
+            <article class="filter-item"><strong>质数个数</strong><div class="filter-options" data-filter="primeCounts"></div><small>1、2、3、5、7按质数统计</small></article>
+            <article class="filter-item"><strong>不同号个数</strong><div class="filter-options" data-filter="distinctCounts" data-start="1"></div><small>5表示五个数字全不同</small></article>
+            <article class="filter-item"><strong>0路个数</strong><div class="filter-options" data-filter="route0Counts"></div><small>0、3、6、9</small></article>
+            <article class="filter-item"><strong>1路个数</strong><div class="filter-options" data-filter="route1Counts"></div><small>1、4、7</small></article>
+            <article class="filter-item"><strong>2路个数</strong><div class="filter-options" data-filter="route2Counts"></div><small>2、5、8</small></article>
+            <article class="filter-item"><strong>连号</strong><div class="filter-options single-choice" data-filter="consecutive"><button data-value="any" class="active">不限</button><button data-value="yes">有</button><button data-value="no">无</button></div><small>包含相邻的两个号码</small></article>
+          </div>
+          <div class="filter-result-bar"><span>基础组合 <strong id="filter-base-bets">0</strong> 注</span><span>条件保留 <strong id="filter-kept-bets">0</strong> 注</span><span>保留比例 <strong id="filter-keep-rate">0%</strong></span></div>
+        </section>
 
         <section class="combination-preview">
           <div class="preview-heading"><div><h2>号码预览</h2><p id="preview-summary">请选择五个位置的号码</p></div><span id="ticket-notation">--</span></div>

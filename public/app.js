@@ -10,7 +10,12 @@ const trendModes = [
 const selectorState = {
   mode: 'compound',
   picks: Array.from({ length: 5 }, () => new Set()),
-  locked: Array(5).fill(false)
+  locked: Array(5).fill(false),
+  filterInitialized: false,
+  filters: {
+    oddCounts: new Set(), bigCounts: new Set(), primeCounts: new Set(), distinctCounts: new Set(),
+    route0Counts: new Set(), route1Counts: new Set(), route2Counts: new Set(), consecutive: 'any'
+  }
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -270,21 +275,61 @@ function selectorTotals() {
   return { counts, complete, hasDan, validDan, valid, bets: valid ? counts.reduce((total, count) => total * count, 1) : 0 };
 }
 
+function numericFilter(id) {
+  const value = Number($(`#${id}`).value);
+  return Number.isFinite(value) && $(`#${id}`).value !== '' ? value : null;
+}
+
+function combinationMatches(number) {
+  if (selectorState.mode !== 'filter') return true;
+  const ds = number.split('').map(Number);
+  const total = sum(ds);
+  const span = Math.max(...ds) - Math.min(...ds);
+  const sumMin = numericFilter('sum-min'), sumMax = numericFilter('sum-max');
+  const spanMin = numericFilter('span-min'), spanMax = numericFilter('span-max');
+  if (sumMin !== null && total < sumMin) return false;
+  if (sumMax !== null && total > sumMax) return false;
+  if (spanMin !== null && span < spanMin) return false;
+  if (spanMax !== null && span > spanMax) return false;
+  const values = {
+    oddCounts: ds.filter((digit) => digit % 2).length,
+    bigCounts: ds.filter((digit) => digit >= 5).length,
+    primeCounts: ds.filter(isPrime).length,
+    distinctCounts: new Set(ds).size,
+    route0Counts: ds.filter((digit) => digit % 3 === 0).length,
+    route1Counts: ds.filter((digit) => digit % 3 === 1).length,
+    route2Counts: ds.filter((digit) => digit % 3 === 2).length
+  };
+  for (const [filter, value] of Object.entries(values)) {
+    const selected = selectorState.filters[filter];
+    if (selected.size && !selected.has(value)) return false;
+  }
+  if (selectorState.filters.consecutive !== 'any') {
+    const unique = [...new Set(ds)].sort((a, b) => a - b);
+    const hasConsecutive = unique.some((digit, index) => index > 0 && digit - unique[index - 1] === 1);
+    if ((selectorState.filters.consecutive === 'yes') !== hasConsecutive) return false;
+  }
+  return true;
+}
+
 function ticketCombinations(limit = 200) {
   const totals = selectorTotals();
-  if (!totals.valid) return [];
+  if (!totals.valid) return { items: [], total: 0 };
   const lists = selectorState.picks.map((_, index) => sortedPicks(index));
-  const combinations = [];
+  const items = [];
+  let total = 0;
   const visit = (position, number) => {
-    if (combinations.length >= limit) return;
     if (position === lists.length) {
-      combinations.push(number);
+      if (combinationMatches(number)) {
+        total += 1;
+        if (items.length < limit) items.push(number);
+      }
       return;
     }
     lists[position].forEach((digit) => visit(position + 1, `${number}${digit}`));
   };
   visit(0, '');
-  return combinations;
+  return { items, total };
 }
 
 function normalizedMultiple() {
@@ -299,50 +344,78 @@ function updateTicketCalculator() {
   const multiple = normalizedMultiple();
   const budgetInput = $('#ticket-budget');
   const budget = Math.max(0, Math.floor(Number(budgetInput.value) || 0));
-  const cost = totals.bets * 2 * multiple;
-  const notation = selectorState.picks.map((_, index) => sortedPicks(index).join('')).join('-');
   const combinations = ticketCombinations();
+  const bets = combinations.total;
+  const cost = bets * 2 * multiple;
+  const notation = selectorState.picks.map((_, index) => sortedPicks(index).join('')).join('-');
 
-  $('#calc-bets').textContent = `${totals.bets.toLocaleString()}注`;
+  $('#calc-bets').textContent = `${bets.toLocaleString()}注`;
   $('#calc-cost').textContent = `${cost.toLocaleString()}元`;
-  $('#calc-probability').textContent = `${(totals.bets / 1000).toFixed(totals.bets ? 3 : 0)}%`;
+  $('#calc-probability').textContent = `${(bets / 1000).toFixed(bets ? 3 : 0)}%`;
   $('#calc-prize').textContent = `${(100000 * multiple).toLocaleString()}元`;
   $('#budget-hint').textContent = `当前预算最多可买${Math.floor(budget / (2 * multiple)).toLocaleString()}注（${multiple}倍）`;
-  $('#ticket-notation').textContent = totals.complete ? notation : '--';
+  $('#ticket-notation').textContent = totals.complete ? (selectorState.mode === 'filter' ? '条件缩水' : notation) : '--';
   $('#preview-summary').textContent = totals.valid
-    ? `共${totals.bets.toLocaleString()}注，${totals.bets > combinations.length ? `显示前${combinations.length}注` : '已全部展开'}`
+    ? `共${bets.toLocaleString()}注，${bets > combinations.items.length ? `显示前${combinations.items.length}注` : '已全部展开'}`
     : '请为五个位置选择号码';
-  $('#combination-list').innerHTML = combinations.length
-    ? combinations.map((number) => `<span class="combination-number">${number}</span>`).join('')
-    : '<span class="combination-empty">完成选号后，这里会展开每一注单式号码。</span>';
+  $('#combination-list').innerHTML = combinations.items.length
+    ? combinations.items.map((number) => `<span class="combination-number">${number}</span>`).join('')
+    : `<span class="combination-empty">${totals.valid && selectorState.mode === 'filter' ? '当前条件没有保留任何号码，请放宽条件。' : '完成选号后，这里会展开每一注单式号码。'}</span>`;
+
+  $('#filter-base-bets').textContent = totals.bets.toLocaleString();
+  $('#filter-kept-bets').textContent = bets.toLocaleString();
+  $('#filter-keep-rate').textContent = totals.bets ? `${(bets / totals.bets * 100).toFixed(2)}%` : '0%';
 
   let warning = '每注2元，倍数只放大金额和返奖，不提高单注概率。';
   if (!totals.complete) warning = '五个位置都至少需要选1个号码。';
   else if (selectorState.mode === 'dantuo' && !totals.hasDan) warning = '定位胆拖至少需要锁定1个位置作为胆码。';
+  else if (selectorState.mode === 'filter' && bets === 0) warning = '当前条件互相冲突，筛选结果为0注。';
   else if (cost > budget) warning = `当前金额超出预算${(cost - budget).toLocaleString()}元，可减少号码或倍数。`;
-  else if (totals.valid) warning = `预算剩余${(budget - cost).toLocaleString()}元；理论概率仅按覆盖${totals.bets.toLocaleString()}个五位数计算。`;
+  else if (totals.valid) warning = `预算剩余${(budget - cost).toLocaleString()}元；理论概率仅按覆盖${bets.toLocaleString()}个五位数计算。`;
   $('#selector-warning').textContent = warning;
-  $('#copy-ticket').disabled = !totals.valid;
+  $('#copy-ticket').disabled = !totals.valid || bets === 0;
 }
 
 function renderSelector() {
   document.querySelectorAll('.mode-button').forEach((button) => button.classList.toggle('active', button.dataset.pickMode === selectorState.mode));
+  $('#filter-panel').classList.toggle('active', selectorState.mode === 'filter');
   $('#position-selector').innerHTML = positionNames.map((name, position) => {
     const selected = selectorState.picks[position];
     const locked = selectorState.locked[position];
-    const label = selectorState.mode === 'dantuo' ? (locked ? `胆码 · ${selected.size}个` : `拖码 · ${selected.size}个`) : `已选 ${selected.size}个`;
+    const label = selectorState.mode === 'dantuo' ? (locked ? `胆码 · ${selected.size}个` : `拖码 · ${selected.size}个`) : `${selectorState.mode === 'filter' ? '候选' : '已选'} ${selected.size}个`;
     return `<article class="position-pick">
       <header><strong>${name}</strong><button class="lock-button ${locked ? 'active' : ''}" data-lock-position="${position}" title="${locked ? '取消胆码' : '设为胆码'}" ${selectorState.mode === 'dantuo' ? '' : 'disabled'}>D</button></header>
       <div class="digit-grid">${Array.from({ length: 10 }, (_, digit) => `<button class="digit-button ${selected.has(digit) ? 'selected' : ''}" data-position="${position}" data-digit="${digit}" aria-pressed="${selected.has(digit)}">${digit}</button>`).join('')}</div>
       <div class="position-count">${label}</div>
     </article>`;
   }).join('');
+  renderFilterPanel();
   updateTicketCalculator();
+}
+
+function renderFilterPanel() {
+  document.querySelectorAll('#filter-panel .filter-options[data-filter]').forEach((group) => {
+    const filter = group.dataset.filter;
+    if (filter === 'consecutive') {
+      group.querySelectorAll('button').forEach((button) => button.classList.toggle('active', button.dataset.value === selectorState.filters.consecutive));
+      return;
+    }
+    const start = Number(group.dataset.start || 0);
+    if (!group.children.length) {
+      group.innerHTML = Array.from({ length: 6 - start }, (_, index) => index + start)
+        .map((value) => `<button data-value="${value}">${value}</button>`).join('');
+    }
+    group.querySelectorAll('button').forEach((button) => button.classList.toggle('active', selectorState.filters[filter].has(Number(button.dataset.value))));
+  });
 }
 
 function setSelectorMode(mode) {
   selectorState.mode = mode;
   if (mode !== 'dantuo') selectorState.locked.fill(false);
+  if (mode === 'filter' && !selectorState.filterInitialized) {
+    selectorState.picks = Array.from({ length: 5 }, () => new Set(Array.from({ length: 10 }, (_, digit) => digit)));
+    selectorState.filterInitialized = true;
+  }
   if (mode === 'single') {
     selectorState.picks.forEach((pick, index) => {
       const first = sortedPicks(index)[0];
@@ -380,7 +453,10 @@ function copyTicketNotation() {
   const totals = selectorTotals();
   if (!totals.valid) return;
   const notation = selectorState.picks.map((_, index) => sortedPicks(index).join('')).join('-');
-  const text = `排列五 ${notation} ${normalizedMultiple()}倍，共${totals.bets}注${totals.bets * 2 * normalizedMultiple()}元`;
+  const calculation = ticketCombinations(selectorState.mode === 'filter' ? 100000 : 0);
+  if (!calculation.total) return;
+  const filterNumbers = selectorState.mode === 'filter' ? `\n${calculation.items.join(' ')}` : '';
+  const text = `排列五 ${selectorState.mode === 'filter' ? '条件缩水' : notation} ${normalizedMultiple()}倍，共${calculation.total}注${calculation.total * 2 * normalizedMultiple()}元${filterNumbers}`;
   const fallback = () => {
     const area = document.createElement('textarea');
     area.value = text; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove();
@@ -493,10 +569,40 @@ $('#position-selector').addEventListener('click', (event) => {
   }
 });
 $('#random-pick').addEventListener('click', randomSelectorPick);
+$('#select-all-pick').addEventListener('click', () => {
+  selectorState.picks = Array.from({ length: 5 }, () => new Set(Array.from({ length: 10 }, (_, digit) => digit)));
+  renderSelector();
+  toast('五个位置已全选');
+});
 $('#clear-pick').addEventListener('click', () => {
   selectorState.picks = Array.from({ length: 5 }, () => new Set());
   renderSelector();
   toast('已清空选号');
+});
+$('#filter-panel').addEventListener('click', (event) => {
+  const button = event.target.closest('.filter-options button');
+  if (!button) return;
+  const group = button.closest('[data-filter]');
+  const filter = group.dataset.filter;
+  if (filter === 'consecutive') selectorState.filters.consecutive = button.dataset.value;
+  else {
+    const value = Number(button.dataset.value);
+    if (selectorState.filters[filter].has(value)) selectorState.filters[filter].delete(value);
+    else selectorState.filters[filter].add(value);
+  }
+  renderFilterPanel();
+  updateTicketCalculator();
+});
+['sum-min', 'sum-max', 'span-min', 'span-max'].forEach((id) => $(`#${id}`).addEventListener('input', updateTicketCalculator));
+$('#reset-filters').addEventListener('click', () => {
+  Object.entries(selectorState.filters).forEach(([filter, value]) => {
+    if (value instanceof Set) value.clear();
+    else selectorState.filters[filter] = 'any';
+  });
+  ['sum-min', 'sum-max', 'span-min', 'span-max'].forEach((id) => { $(`#${id}`).value = ''; });
+  renderFilterPanel();
+  updateTicketCalculator();
+  toast('缩水条件已重置');
 });
 $('#ticket-multiple').addEventListener('input', updateTicketCalculator);
 $('#ticket-budget').addEventListener('input', updateTicketCalculator);

@@ -151,6 +151,24 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .calc-results dd { margin: 0; font-weight: 800; }
 .calc-results div:nth-child(2) dd { color: var(--red); }
 .ticket-calculator > p { margin-top: 10px; color: var(--muted); font-size: 11px; }
+.filter-panel { display: none; padding: 18px 22px 20px; background: #f4f6f7; border-bottom: 1px solid var(--line); }
+.filter-panel.active { display: block; }
+.filter-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.filter-heading h2 { padding-left: 10px; border-left: 3px solid var(--red); font-size: 17px; }
+.filter-heading p { margin: 2px 0 0 13px; color: var(--muted); font-size: 11px; }
+.filter-grid { display: grid; grid-template-columns: repeat(5, minmax(160px, 1fr)); gap: 9px; }
+.filter-item { min-height: 98px; padding: 11px; background: white; border: 1px solid var(--line); border-radius: 5px; }
+.filter-item strong { display: block; margin-bottom: 9px; font-size: 13px; }
+.filter-item small { display: block; margin-top: 7px; color: var(--muted); font-size: 10px; }
+.filter-options { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.filter-options button { height: 28px; min-width: 0; padding: 0; border: 1px solid #d5dce1; border-radius: 3px; background: white; color: #53616c; }
+.filter-options button.active { border-color: var(--red); background: var(--red); color: white; }
+.filter-options.single-choice { grid-template-columns: repeat(3, 1fr); }
+.filter-range > div { display: grid; grid-template-columns: 1fr 18px 1fr; align-items: center; gap: 5px; }
+.filter-range input { width: 100%; height: 30px; padding: 0 6px; border: 1px solid #d5dce1; border-radius: 3px; text-align: center; }
+.filter-range span { color: var(--muted); text-align: center; }
+.filter-result-bar { margin-top: 12px; min-height: 42px; padding: 9px 12px; display: flex; align-items: center; gap: 28px; background: #28343e; color: #c9d0d5; border-radius: 4px; }
+.filter-result-bar strong { margin-left: 5px; color: #ffd06b; font-size: 16px; }
 .combination-preview { padding: 16px 22px 24px; background: white; }
 .preview-heading { display: flex; align-items: center; justify-content: space-between; padding-bottom: 12px; }
 .preview-heading h2 { font-size: 16px; }
@@ -167,6 +185,10 @@ td.number { color: var(--red); font-weight: 800; letter-spacing: 4px; }
 @media (max-width: 1180px) {
   .summary-strip { grid-template-columns: repeat(3, 1fr); }
   .chart-wrap { height: calc(100vh - 316px); }
+  .selector-toolbar { grid-template-columns: 1fr; gap: 10px; }
+  .mode-segments, .selector-actions { width: 100%; }
+  .mode-button, .selector-actions button { flex: 1; }
+  .filter-grid { grid-template-columns: repeat(3, minmax(160px, 1fr)); }
 }
 @media (max-width: 760px) {
   .topbar { height: auto; min-height: 112px; grid-template-columns: 1fr auto; padding: 10px 14px 0; }
@@ -205,8 +227,13 @@ td.number { color: var(--red); font-weight: 800; letter-spacing: 4px; }
   .selector-toolbar { grid-template-columns: 1fr; gap: 10px; }
   .mode-segments, .selector-actions { width: 100%; }
   .mode-button, .selector-actions button { flex: 1; }
+  .mode-button { height: 42px; padding: 0 4px; line-height: 1.2; }
   .selector-content { grid-template-columns: 1fr; }
-  .position-selector { grid-template-columns: repeat(5, minmax(122px, 1fr)); overflow-x: auto; padding: 12px; }
+  .position-selector { grid-template-columns: repeat(5, minmax(160px, 1fr)); overflow-x: auto; padding: 12px; }
   .ticket-calculator { border-left: 0; border-top: 1px solid var(--line); }
+  .filter-panel { padding: 14px 12px; }
+  .filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+  .filter-item { min-height: 94px; }
+  .filter-result-bar { align-items: flex-start; flex-direction: column; gap: 3px; }
   .combination-preview { padding: 14px; }
 }
