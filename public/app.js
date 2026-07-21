@@ -6,7 +6,9 @@ const RECOMMENDATION_WINDOW = 100;
 const BACKTEST_WINDOW = 600;
 const VALIDATION_WINDOW = 180;
 const WEIGHT_VALIDATION_WINDOW = 100;
-const RECENT_WEIGHT_CANDIDATES = [.5, .65, .7, .75, .85];
+const RECENT_WINDOWS = [30, 50, 100];
+const RECENT_WINDOW_WEIGHTS = [.45, .35, .2];
+const RECENT_WEIGHT_CANDIDATES = [.6, .7, .8, .9];
 let positionNames = ['万位', '千位', '百位', '十位', '个位'];
 let trendModes = [];
 const baseTrendModes = [
@@ -374,9 +376,9 @@ function balancedTop(ranking, count) {
 }
 
 const modelDefinitions = [
-  ['hot20', '近20期热度'], ['bayes60', '60期贝叶斯'], ['recent100', '100期主频率'],
-  ['stable300', '300期稳定频率'], ['stable600', '600期稳定频率'],
-  ['decay', '指数衰减'], ['transition', '位置转移'], ['hazard', '遗漏危险率'],
+  ['recent30', '近30期频率'], ['recent50', '近50期频率'], ['recent100', '近100期频率'],
+  ['momentum', '30/100期动量'], ['decay50', '近50期指数衰减'], ['stable300', '300期稳定频率'],
+  ['transition', '位置转移'], ['hazard', '遗漏危险率'],
   ['structure', '012/奇偶/大小'], ['pattern', '前期形态转移']
 ];
 
@@ -395,9 +397,17 @@ function frequencyScores(series, end, position, window, prior = .5) {
 function decayScores(series, end, position) {
   const scores = Array(10).fill(.25);
   for (let index = Math.max(0, end - RECOMMENDATION_WINDOW); index < end; index++) {
-    scores[series[index][position]] += Math.pow(.97, end - index - 1);
+    scores[series[index][position]] += Math.pow(.965, end - index - 1);
   }
   return normalizeScores(scores);
+}
+
+function momentumScores(series, end, position) {
+  const recent30 = frequencyScores(series, end, position, 30, 1);
+  const recent50 = frequencyScores(series, end, position, 50, 1);
+  const recent100 = frequencyScores(series, end, position, 100, 1);
+  return normalizeScores(recent30.map((score, digit) =>
+    score * .55 + recent50[digit] * .3 + recent100[digit] * .15 + (score - recent100[digit]) * .25));
 }
 
 function transitionScores(series, end, position) {
@@ -406,7 +416,7 @@ function transitionScores(series, end, position) {
   for (let index = Math.max(1, end - 500); index < end; index++) {
     if (series[index - 1][position] === previousDigit) scores[series[index][position]] += 1;
   }
-  const fallback = frequencyScores(series, end, position, 60);
+  const fallback = frequencyScores(series, end, position, 50);
   return normalizeScores(scores).map((score, digit) => score * .75 + fallback[digit] * .25);
 }
 
@@ -440,7 +450,7 @@ function structureScores(series, end, position) {
   const route = categoryTransitionScores(series, end, position, 3, (digit) => digit % 3);
   const parity = categoryTransitionScores(series, end, position, 2, (digit) => digit % 2);
   const size = categoryTransitionScores(series, end, position, 2, (digit) => digit >= 5 ? 1 : 0);
-  const frequency = frequencyScores(series, end, position, 60);
+  const frequency = frequencyScores(series, end, position, 50);
   return Array.from({ length: 10 }, (_, digit) => route[digit % 3] * .4 + parity[digit % 2] * .2 + size[digit >= 5 ? 1 : 0] * .2 + frequency[digit] * .2);
 }
 
@@ -450,18 +460,18 @@ function patternTransitionScores(series, end, position) {
   for (let index = Math.max(1, end - BACKTEST_WINDOW); index < end; index++) {
     if (series[index - 1].map((digit) => digit % 3).join('') === previousPattern) scores[series[index][position]] += 1;
   }
-  const frequency = frequencyScores(series, end, position, 60);
+  const frequency = frequencyScores(series, end, position, 50);
   return normalizeScores(scores).map((score, digit) => score * .7 + frequency[digit] * .3);
 }
 
 function modelRankingsAt(series, end, position) {
   const scores = {
-    hot20: frequencyScores(series, end, position, 20),
-    bayes60: frequencyScores(series, end, position, 60, 1),
+    recent30: frequencyScores(series, end, position, 30, 1),
+    recent50: frequencyScores(series, end, position, 50, 1),
     recent100: frequencyScores(series, end, position, RECOMMENDATION_WINDOW, 1),
+    momentum: momentumScores(series, end, position),
+    decay50: decayScores(series, end, position),
     stable300: frequencyScores(series, end, position, 300, 1),
-    stable600: frequencyScores(series, end, position, BACKTEST_WINDOW, 1),
-    decay: decayScores(series, end, position),
     transition: transitionScores(series, end, position),
     hazard: normalizeScores(hazardScores(series, end, position)),
     structure: normalizeScores(structureScores(series, end, position)),
@@ -514,7 +524,7 @@ function combineModelRankings(rankings, weights) {
     .sort((a, b) => scores[b] - scores[a] || a - b);
 }
 
-const recentModelIds = new Set(['hot20', 'bayes60', 'recent100', 'decay', 'structure']);
+const recentModelIds = new Set(['recent30', 'recent50', 'recent100', 'momentum', 'decay50', 'structure']);
 
 function recencyBlendWeights(recentWeight) {
   const recentCount = modelDefinitions.filter(([id]) => recentModelIds.has(id)).length;
@@ -524,12 +534,11 @@ function recencyBlendWeights(recentWeight) {
 }
 
 function strategySelectionScore(trainingRecords, position, strategy, count, recentWeight) {
-  const recentStart = Math.max(0, trainingRecords.length - RECOMMENDATION_WINDOW);
-  const recentRecords = trainingRecords.slice(recentStart);
-  const stabilityRecords = trainingRecords.slice(0, recentStart);
   const hitRate = (records) => records.length ? records.filter((record) =>
     record.candidateRankings[position][strategy].slice(0, count).includes(record.actual[position])).length / records.length : 0;
-  const recentRate = hitRate(recentRecords);
+  const recentRate = RECENT_WINDOWS.reduce((total, window, index) =>
+    total + hitRate(trainingRecords.slice(-window)) * RECENT_WINDOW_WEIGHTS[index], 0);
+  const stabilityRecords = trainingRecords.slice(0, Math.max(0, trainingRecords.length - RECOMMENDATION_WINDOW));
   const stabilityRate = hitRate(stabilityRecords.length ? stabilityRecords : trainingRecords);
   return recentRate * recentWeight + stabilityRate * (1 - recentWeight);
 }
@@ -578,13 +587,15 @@ function planMetrics(predictionRecords, split, positionCount) {
   const training = predictionRecords.slice(0, split);
   const validation = predictionRecords.slice(split);
   const validationHits = validation.filter(isFullHit).length;
+  const validationPositionRates = Array.from({ length: positionCount }, (_, position) => validation.length
+    ? validation.filter((record) => record.picks[position].includes(record.actual[position])).length / validation.length : 0);
   return {
     trainRate: training.length ? training.filter(isFullHit).length / training.length : 0,
     validationSize: validation.length,
     validationHits,
     validationRate: validation.length ? validationHits / validation.length : 0,
-    validationPositionRates: Array.from({ length: positionCount }, (_, position) => validation.length
-      ? validation.filter((record) => record.picks[position].includes(record.actual[position])).length / validation.length : 0)
+    validationPositionRates,
+    validationPositionRate: validationPositionRates.reduce((total, rate) => total + rate, 0) / positionCount
   };
 }
 
@@ -672,7 +683,7 @@ function selectBacktestedPlan(backtest, count) {
   const selectedRankings = selectedStrategies.map((strategy, position) => currentCandidates[position][strategy]);
   const strategyName = (strategy, position) => strategy < modelCount
     ? modelDefinitions[strategy][1]
-    : strategy === recencyStrategy ? `自动融合·近100期${Math.round(selectedRecentWeight * 100)}%`
+    : strategy === recencyStrategy ? `自动融合·30/50/100期${Math.round(selectedRecentWeight * 100)}%`
       : strategy === equalStrategy ? '等权多模型融合'
         : strategy === onlineStrategy ? `在线融合·${modelDefinitions[dominantModels[position]][1]}主导` : '自动融合';
   const plan = {
@@ -750,11 +761,13 @@ function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
   $('#daily-narrow-title').textContent = `${narrowCount}码直选复式`;
   $('#daily-six').textContent = widePlan.picks.map((list) => list.join('')).join('-');
   $('#daily-three').textContent = narrowPlan.picks.map((list) => list.join('')).join('-');
-  $('#daily-six-note').textContent = `逐期样本外覆盖 ${(widePlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(widePlan.baseline * 100).toFixed(1)}%${widePlan.alignedWithPl5 ? ' · 已包含排五前三位3码' : ''}`;
-  $('#daily-three-note').textContent = `逐期样本外覆盖 ${(narrowPlan.validationRate * 100).toFixed(1)}% · 理论基线 ${(narrowPlan.baseline * 100).toFixed(1)}%`;
-  $('#daily-six-meta').textContent = `${widePlan.validationHits}/${widePlan.validationSize}期 · ${wideBets * 2}元`;
-  $('#daily-three-meta').textContent = `${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${narrowBets * 2}元`;
-  $('#algorithm-summary').textContent = `训练段自动选择近${narrowPlan.recommendationWindow}期权重${Math.round(narrowPlan.recentSignalWeight * 100)}%；内层${narrowPlan.weightValidationSize}期调权，后${narrowPlan.validationSize}期留出验证`;
+  $('#daily-six-note').textContent = `整注命中 ${(widePlan.validationRate * 100).toFixed(1)}% · 分位覆盖 ${(widePlan.validationPositionRate * 100).toFixed(1)}% · 理论 ${(widePlan.baseline * 100).toFixed(1)}%${widePlan.alignedWithPl5 ? ' · 已包含排五前三位3码' : ''}`;
+  $('#daily-three-note').textContent = `整注命中 ${(narrowPlan.validationRate * 100).toFixed(1)}% · 分位覆盖 ${(narrowPlan.validationPositionRate * 100).toFixed(1)}% · 理论 ${(narrowPlan.baseline * 100).toFixed(1)}%`;
+  $('#daily-six-meta').textContent = `命中${widePlan.validationHits}/${widePlan.validationSize}期 · ${wideBets * 2}元`;
+  $('#daily-three-meta').textContent = `命中${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${narrowBets * 2}元`;
+  $('#algorithm-summary').textContent = `近30/50/100期表现按45%/35%/20%评分；近期信号权重${Math.round(narrowPlan.recentSignalWeight * 100)}%，后${narrowPlan.validationSize}期留出验证`;
+  $('#algorithm-hit-rate').textContent = `整注命中率：${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${(narrowPlan.validationRate * 100).toFixed(1)}%`;
+  $('#algorithm-position-rate').textContent = `分位覆盖率：${(narrowPlan.validationPositionRate * 100).toFixed(1)}% · 理论 ${((narrowCount / 10) * 100).toFixed(1)}%`;
   $('#algorithm-three-models').textContent = `${narrowCount}码：${names.map((name, position) => `${name.slice(0, 1)}${narrowPlan.modelNames[position]}`).join(' / ')}`;
   $('#algorithm-six-models').textContent = widePlan.alignedWithPl5
     ? '6码：排三3码核心 + 排五前三位3码 + 同模型补足'
@@ -797,10 +810,10 @@ function renderBacktestedRecommendation(count) {
   $('#ticket-bets').textContent = `${bets}注`;
   $('#ticket-cost').textContent = `${bets * 2}元`;
   $('#ticket-probability').textContent = `理论概率 ${(bets / (10 ** names.length) * 100).toFixed(3)}%`;
-  $('#reason-list').innerHTML = names.map((name, position) => `<div class="reason-item"><strong>${name}：${plan.modelNames[position]}</strong><span>后${plan.validationSize}期完全留出分位覆盖率 ${(plan.validationPositionRates[position] * 100).toFixed(1)}%，该段未参与策略选择。</span></div>`).join('');
-  $('#recommend-date').textContent = `自动选择近${plan.recommendationWindow}期权重${Math.round(plan.recentSignalWeight * 100)}% · 内层${plan.weightValidationSize}期调权 · 外层${plan.validationSize}期整注覆盖 ${(plan.validationRate * 100).toFixed(1)}% · 理论基线 ${(plan.baseline * 100).toFixed(1)}%`;
-  $('.model-controls h2').textContent = '冠军挑战集成';
-  $('.model-badge').textContent = '嵌套留出验证版';
+  $('#reason-list').innerHTML = names.map((name, position) => `<div class="reason-item"><strong>${name}：${plan.modelNames[position]}</strong><span>近30、50、100期综合筛选；后${plan.validationSize}期留出分位覆盖率 ${(plan.validationPositionRates[position] * 100).toFixed(1)}%。</span></div>`).join('');
+  $('#recommend-date').textContent = `近30/50/100期为主 · 近期权重${Math.round(plan.recentSignalWeight * 100)}% · 留出整注命中 ${(plan.validationRate * 100).toFixed(1)}% · 分位覆盖 ${(plan.validationPositionRate * 100).toFixed(1)}% · 理论 ${(plan.baseline * 100).toFixed(1)}%`;
+  $('.model-controls h2').textContent = '30/50/100期滚动模型';
+  $('.model-badge').textContent = '独立留出验证版';
   $('#generate-button').textContent = '重新回测';
   ['model-window', 'omit-weight', 'freq-weight', 'balance-toggle'].forEach((id) => { $(`#${id}`).disabled = true; });
 }
@@ -1101,7 +1114,7 @@ function updateTicketCalculator() {
   $('#filter-kept-bets').textContent = bets.toLocaleString();
   $('#filter-keep-rate').textContent = totals.bets ? `${(bets / totals.bets * 100).toFixed(2)}%` : '0%';
   $('#probability-method').textContent = probabilityModel
-    ? `匹配每位约${probabilityModel.matchedCount}码模型，近100期自动权重${Math.round(probabilityModel.plan.recentSignalWeight * 100)}%；算法值按外层${probabilityModel.validationRecords.length}期排名分布和分位独立近似校准，不替代理论命中率。`
+    ? `匹配每位约${probabilityModel.matchedCount}码模型，近30、50、100期信号权重${Math.round(probabilityModel.plan.recentSignalWeight * 100)}%；算法值按外层${probabilityModel.validationRecords.length}期排名分布和分位独立近似校准，不替代理论命中率。`
     : '完成复式选号后，系统将结合现有算法给出校准估计。';
 
   let warning = '每注2元，倍数只放大金额和返奖，不提高单注概率。';
