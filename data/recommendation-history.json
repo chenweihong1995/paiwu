@@ -1,0 +1,128 @@
+[
+  {
+    "lottery": "pl5",
+    "date": "2026-07-21",
+    "sourceIssue": "2026191",
+    "sourceDate": "2026-07-20",
+    "createdAt": "2026-07-21T05:55:24.877Z",
+    "modelVersion": "short-cycle-30-50-100-v1",
+    "recentWindows": [
+      30,
+      50,
+      100
+    ],
+    "recentSignalWeight": 0.6,
+    "recommendations": [
+      {
+        "key": "wide",
+        "label": "3码直选复式",
+        "picks": [
+          "013",
+          "478",
+          "457",
+          "467",
+          "023"
+        ],
+        "bets": 243,
+        "cost": 486,
+        "baseline": 0.0024299999999999994,
+        "validationRate": 0.005555555555555556,
+        "validationPositionRate": 0.30666666666666664,
+        "modelNames": [
+          "30/100期动量",
+          "位置转移",
+          "遗漏危险率",
+          "近50期指数衰减",
+          "前期形态转移"
+        ],
+        "positionCount": 5
+      },
+      {
+        "key": "narrow",
+        "label": "2码直选复式",
+        "picks": [
+          "03",
+          "47",
+          "57",
+          "47",
+          "02"
+        ],
+        "bets": 32,
+        "cost": 64,
+        "baseline": 0.0003200000000000001,
+        "validationRate": 0,
+        "validationPositionRate": 0.20444444444444443,
+        "modelNames": [
+          "30/100期动量",
+          "位置转移",
+          "遗漏危险率",
+          "近50期指数衰减",
+          "前期形态转移"
+        ],
+        "positionCount": 5
+      }
+    ],
+    "id": "pl5-2026-07-21-2026191",
+    "status": "pending",
+    "outcome": null
+  },
+  {
+    "lottery": "pl3",
+    "date": "2026-07-21",
+    "sourceIssue": "2026191",
+    "sourceDate": "2026-07-20",
+    "createdAt": "2026-07-21T05:57:18.462Z",
+    "modelVersion": "short-cycle-30-50-100-v1",
+    "recentWindows": [
+      30,
+      50,
+      100
+    ],
+    "recentSignalWeight": 0.7,
+    "recommendations": [
+      {
+        "key": "wide",
+        "label": "6码直选复式",
+        "picks": [
+          "013469",
+          "456789",
+          "145679"
+        ],
+        "bets": 216,
+        "cost": 432,
+        "baseline": 0.21599999999999997,
+        "validationRate": 0.17777777777777778,
+        "validationPositionRate": 0.5796296296296296,
+        "modelNames": [
+          "012/奇偶/大小",
+          "前期形态转移",
+          "012/奇偶/大小"
+        ],
+        "positionCount": 3
+      },
+      {
+        "key": "narrow",
+        "label": "3码直选复式",
+        "picks": [
+          "034",
+          "456",
+          "179"
+        ],
+        "bets": 27,
+        "cost": 54,
+        "baseline": 0.026999999999999996,
+        "validationRate": 0.027777777777777776,
+        "validationPositionRate": 0.2759259259259259,
+        "modelNames": [
+          "012/奇偶/大小",
+          "前期形态转移",
+          "012/奇偶/大小"
+        ],
+        "positionCount": 3
+      }
+    ],
+    "id": "pl3-2026-07-21-2026191",
+    "status": "pending",
+    "outcome": null
+  }
+]

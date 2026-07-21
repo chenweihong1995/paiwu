@@ -20,6 +20,7 @@
       <button class="nav-item active" data-view="overview">研判主板</button>
       <button class="nav-item" data-view="trend">走势分析</button>
       <button class="nav-item" data-view="recommend">每日推荐</button>
+      <button class="nav-item" data-view="review">推荐复盘</button>
       <button class="nav-item" data-view="selector">选号工具</button>
       <button class="nav-item" data-view="history">开奖数据</button>
     </nav>
@@ -131,6 +132,12 @@
             <p>推荐同时观察近30、50、100期信号，并以独立留出段核验。相同注数的理论概率相同。</p>
           </aside>
         </div>
+      </section>
+
+      <section id="review-view" class="view-panel">
+        <div class="history-head review-head"><div><h2>每日推荐复盘</h2><p>每次推荐按生成日和数据截止期保存；下一期开奖后自动核对</p></div><button id="review-refresh" class="secondary-button">刷新复盘</button></div>
+        <div class="review-summary" id="review-summary">正在读取历史推荐...</div>
+        <div class="history-table-wrap review-table-wrap"><table><thead><tr><th>生成日</th><th>彩种</th><th>数据截至</th><th>推荐号码</th><th>留出回测</th><th>开奖结果</th><th>复盘</th></tr></thead><tbody id="review-body"></tbody></table></div>
       </section>
 
       <section id="history-view" class="view-panel">

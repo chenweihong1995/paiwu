@@ -2,6 +2,8 @@ const state = { lottery: 'pl5', draws: [], periods: 50, mode: 'position', lines:
 const overviewData = { pl3: [], pl5: [] };
 const overviewRecommendations = { pl3: { wide: [], narrow: [] }, pl5: { wide: [], narrow: [] } };
 const algorithmCaches = { pl3: null, pl5: null };
+const savedDailySnapshots = new Set();
+const LOCAL_REVIEW_HISTORY_KEY = 'lottery-recommendation-history-v1';
 const RECOMMENDATION_WINDOW = 100;
 const BACKTEST_WINDOW = 600;
 const VALIDATION_WINDOW = 180;
@@ -35,6 +37,8 @@ const selectorState = {
 };
 
 const $ = (selector) => document.querySelector(selector);
+const beijingDate = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' })
+  .formatToParts(new Date()).filter((part) => part.type !== 'literal').map((part) => part.value).join('-');
 const digitCount = () => state.lottery === 'pl3' ? 3 : 5;
 const lotteryName = () => state.lottery === 'pl3' ? '排列三' : '排列五';
 const drawDigits = (draw, count) => String(draw?.winnum || '').replace(/<[^>]*>/g, '').replace(/\D/g, '').slice(0, count).padStart(count, '0').split('').map(Number);
@@ -741,6 +745,81 @@ function pl5FrontWidePlan(draws) {
   return createExpandedPlan(backtest, selectBacktestedPlan(backtest, 2), 3);
 }
 
+function planSnapshot(key, label, plan, positionCount) {
+  const bets = plan.picks.reduce((total, picks) => total * picks.length, 1);
+  return {
+    key,
+    label,
+    picks: plan.picks.map((picks) => picks.join('')),
+    bets,
+    cost: bets * 2,
+    baseline: plan.baseline,
+    validationRate: plan.validationRate,
+    validationPositionRate: plan.validationPositionRate,
+    modelNames: plan.modelNames,
+    positionCount
+  };
+}
+
+function readLocalReviewHistory() {
+  try {
+    const entries = JSON.parse(localStorage.getItem(LOCAL_REVIEW_HISTORY_KEY) || '[]');
+    return Array.isArray(entries) ? entries : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveLocalReviewEntry(entry) {
+  const entries = readLocalReviewHistory();
+  const index = entries.findIndex((item) => item.id === entry.id);
+  if (index >= 0) entries[index] = { ...entries[index], ...entry };
+  else entries.push(entry);
+  localStorage.setItem(LOCAL_REVIEW_HISTORY_KEY, JSON.stringify(entries.slice(-1000)));
+}
+
+function mergeReviewEntries(serverEntries) {
+  const merged = new Map(readLocalReviewHistory().map((entry) => [entry.id, entry]));
+  serverEntries.forEach((entry) => {
+    const local = merged.get(entry.id);
+    merged.set(entry.id, local?.status === 'settled' && entry.status !== 'settled' ? local : entry);
+    saveLocalReviewEntry(entry);
+  });
+  return [...merged.values()].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount) {
+  const latest = draws[draws.length - 1];
+  if (!latest) return;
+  const key = `${lottery}-${beijingDate()}-${latest.issue}`;
+  if (savedDailySnapshots.has(key)) return;
+  savedDailySnapshots.add(key);
+  const positionCount = lottery === 'pl3' ? 3 : 5;
+  const snapshot = {
+    lottery,
+    date: beijingDate(),
+    sourceIssue: String(latest.issue),
+    sourceDate: latest.kjdate,
+    createdAt: new Date().toISOString(),
+    modelVersion: 'short-cycle-30-50-100-v1',
+    recentWindows: RECENT_WINDOWS,
+    recentSignalWeight: narrowPlan.recentSignalWeight,
+    recommendations: [
+      planSnapshot('wide', `${wideCount}码直选复式`, widePlan, positionCount),
+      planSnapshot('narrow', `${narrowCount}码直选复式`, narrowPlan, positionCount)
+    ]
+  };
+  snapshot.id = `${lottery}-${snapshot.date}-${snapshot.sourceIssue}`;
+  snapshot.status = 'pending';
+  snapshot.outcome = null;
+  saveLocalReviewEntry(snapshot);
+  fetch('/api/recommendations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(snapshot)
+  }).catch(() => savedDailySnapshots.delete(key));
+}
+
 function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
   const isPl3 = lottery === 'pl3';
   const names = isPl3 ? ['百位', '十位', '个位'] : ['万位', '千位', '百位', '十位', '个位'];
@@ -797,6 +876,7 @@ function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
     $('#daily-group6').textContent = routeLine.join(' ');
     $('#daily-group6-detail').textContent = '万、千、百、十、个位依次对应的012路';
   }
+  saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount);
 }
 
 function renderBacktestedRecommendation(count) {
@@ -935,6 +1015,57 @@ function renderHistory(query = '') {
     const m = metrics(draw, previous);
     return `<tr><td>${draw.issue}</td><td>${draw.kjdate}</td><td class="number">${m.ds.join(' ')}</td><td>${m.total}</td><td>${m.span}</td><td>${m.route}</td><td>${m.odd}</td><td>${m.big}</td></tr>`;
   }).join('');
+}
+
+function reviewDirection(entries) {
+  const settled = entries.filter((entry) => entry.status === 'settled');
+  if (!settled.length) return '尚未有已开奖的推荐，下一期开奖后会自动生成第一条复盘。';
+  const observations = settled.flatMap((entry) => entry.recommendations.map((recommendation) => {
+    const outcome = entry.outcome?.results?.find((result) => result.key === recommendation.key);
+    const actualRate = outcome ? outcome.positionHitCount / recommendation.positionCount : 0;
+    const expectedRate = recommendation.picks.reduce((total, picks) => total + picks.length / 10, 0) / recommendation.positionCount;
+    return { actualRate, expectedRate, fullHit: outcome?.fullHit };
+  }));
+  const actual = observations.reduce((total, item) => total + item.actualRate, 0) / observations.length;
+  const expected = observations.reduce((total, item) => total + item.expectedRate, 0) / observations.length;
+  const fullHits = observations.filter((item) => item.fullHit).length;
+  const prefix = `已结算${settled.length}天，${observations.length}档方案；整注命中${fullHits}档，分位覆盖${(actual * 100).toFixed(1)}%，理论${(expected * 100).toFixed(1)}%。`;
+  if (settled.length < 10) return `${prefix} 样本不足10天，暂不自动改权重。`;
+  if (actual < expected - .04) return `${prefix} 覆盖低于理论4个百分点以上，复盘时优先降低短期动量和遗漏信号的权重。`;
+  if (actual > expected + .04) return `${prefix} 覆盖高于理论4个百分点以上，保留当前30/50期偏重，并继续观察。`;
+  return `${prefix} 覆盖接近理论值，暂不因单日结果调整模型，继续累积样本。`;
+}
+
+function renderReviewRows(entries) {
+  $('#review-summary').innerHTML = `<strong>${lotteryName()}复盘判断：</strong>${reviewDirection(entries)}`;
+  $('#review-body').innerHTML = entries.length ? entries.map((entry) => {
+    const recommendations = entry.recommendations || [];
+    const outcomeByKey = new Map((entry.outcome?.results || []).map((result) => [result.key, result]));
+    const ticket = recommendations.map((recommendation) => `<div class="review-ticket"><small>${recommendation.label} · ${recommendation.cost}元</small>${recommendation.picks.join('-')}</div>`).join('');
+    const validation = recommendations.map((recommendation) => `<div><small>${recommendation.label}</small>整注 ${(recommendation.validationRate * 100).toFixed(1)}% · 分位 ${(recommendation.validationPositionRate * 100).toFixed(1)}%</div>`).join('');
+    const result = entry.status === 'settled'
+      ? `<div class="review-result"><strong>${entry.outcome.targetIssue}期 · ${entry.outcome.actual}</strong><small>${entry.outcome.targetDate}</small></div>`
+      : '<span class="review-status pending">待下一期开奖</span>';
+    const verdict = entry.status === 'settled' ? recommendations.map((recommendation) => {
+      const item = outcomeByKey.get(recommendation.key);
+      const status = item.fullHit ? 'hit' : 'miss';
+      return `<div class="review-status ${status}">${recommendation.label}${item.fullHit ? ' 命中' : ' 未中'}<small>分位覆盖 ${item.positionHitCount}/${recommendation.positionCount}</small></div>`;
+    }).join('') : '<span class="review-status pending">等待核对</span>';
+    return `<tr><td>${entry.date}</td><td>${entry.lottery === 'pl3' ? '排列三' : '排列五'}</td><td>${entry.sourceIssue}期<br><small>${entry.sourceDate}</small></td><td>${ticket}</td><td>${validation}</td><td>${result}</td><td>${verdict}</td></tr>`;
+  }).join('') : '<tr><td colspan="7">暂无保存的推荐。打开研判主板后，今日排三和排五方案会自动归档。</td></tr>';
+}
+
+async function renderReview() {
+  $('#review-summary').textContent = '正在核对历史推荐与最新开奖...';
+  try {
+    const response = await fetch(`/api/recommendations?lottery=${state.lottery}`);
+    const result = await response.json();
+    renderReviewRows(mergeReviewEntries(result.data || []).filter((entry) => entry.lottery === state.lottery));
+  } catch (_) {
+    const local = readLocalReviewHistory().filter((entry) => entry.lottery === state.lottery);
+    if (local.length) renderReviewRows(local);
+    else $('#review-summary').textContent = '复盘记录读取失败，请稍后刷新。';
+  }
 }
 
 function sortedPicks(position) {
@@ -1268,6 +1399,7 @@ function showView(view) {
   $('.summary-strip').style.display = view === 'trend' ? '' : 'none';
   if (view === 'overview') renderOverview();
   if (view === 'recommend') generateRecommendation();
+  if (view === 'review') renderReview();
   if (view === 'history') renderHistory($('#history-search').value.trim());
   if (view === 'selector') renderSelector();
 }
@@ -1387,6 +1519,7 @@ $('#refresh-button').addEventListener('click', () => loadData(true));
 $('#digits-slider').addEventListener('input', (event) => { $('#digits-output').textContent = event.target.value; });
 $('#generate-button').addEventListener('click', () => { generateRecommendation(); toast('已按当前参数重新计算'); });
 $('#history-search').addEventListener('input', (event) => renderHistory(event.target.value.trim()));
+$('#review-refresh').addEventListener('click', () => renderReview());
 document.querySelectorAll('.mode-button').forEach((button) => button.addEventListener('click', () => setSelectorMode(button.dataset.pickMode)));
 $('#position-selector').addEventListener('click', (event) => {
   const digitButton = event.target.closest('[data-digit]');

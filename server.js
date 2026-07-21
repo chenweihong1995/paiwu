@@ -7,6 +7,7 @@ const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SNAPSHOT = path.join(__dirname, 'data', 'pl5-history.json');
+const RECOMMENDATION_HISTORY = path.join(__dirname, 'data', 'recommendation-history.json');
 const DATA_URLS = {
   pl3: 'https://tb.tuganjue.com/api/pl3/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all',
   pl5: 'https://tb.tuganjue.com/api/pl5/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all'
@@ -80,6 +81,69 @@ function sendJson(response, status, value) {
   response.end(JSON.stringify(value));
 }
 
+function readRecommendationHistory() {
+  try {
+    const value = JSON.parse(fs.readFileSync(RECOMMENDATION_HISTORY, 'utf8'));
+    return Array.isArray(value) ? value : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function writeRecommendationHistory(history) {
+  fs.mkdirSync(path.dirname(RECOMMENDATION_HISTORY), { recursive: true });
+  fs.writeFileSync(RECOMMENDATION_HISTORY, JSON.stringify(history, null, 2));
+}
+
+function parseBody(request) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    request.setEncoding('utf8');
+    request.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > 200000) request.destroy(new Error('Request too large'));
+    });
+    request.on('end', () => {
+      try { resolve(JSON.parse(body || '{}')); } catch (error) { reject(error); }
+    });
+    request.on('error', reject);
+  });
+}
+
+function isValidSnapshot(snapshot) {
+  return snapshot && ['pl3', 'pl5'].includes(snapshot.lottery) && /^\d+$/.test(String(snapshot.sourceIssue || ''))
+    && /^\d{4}-\d{2}-\d{2}$/.test(String(snapshot.date || '')) && Array.isArray(snapshot.recommendations)
+    && snapshot.recommendations.length > 0 && snapshot.recommendations.length <= 4;
+}
+
+function settleRecommendationHistory(history, drawsByLottery) {
+  let changed = false;
+  history.forEach((entry) => {
+    const draws = drawsByLottery[entry.lottery] || [];
+    const sourceIndex = draws.findIndex((draw) => String(draw.issue) === String(entry.sourceIssue));
+    const target = sourceIndex >= 0 ? draws[sourceIndex + 1] : null;
+    if (!target) return;
+    const actual = normalizeDraw(target, entry.lottery).winnum.replace(/\s/g, '');
+    const results = entry.recommendations.map((recommendation) => {
+      const picks = recommendation.picks || [];
+      const positionHits = picks.map((list, position) => String(list).includes(actual[position]));
+      return {
+        key: recommendation.key,
+        fullHit: positionHits.every(Boolean),
+        positionHits,
+        positionHitCount: positionHits.filter(Boolean).length
+      };
+    });
+    const nextOutcome = { targetIssue: target.issue, targetDate: target.kjdate, actual, results };
+    if (JSON.stringify(entry.outcome) !== JSON.stringify(nextOutcome) || entry.status !== 'settled') {
+      entry.outcome = nextOutcome;
+      entry.status = 'settled';
+      changed = true;
+    }
+  });
+  return changed;
+}
+
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
   if (url.pathname === '/api/draws') {
@@ -87,6 +151,46 @@ const server = http.createServer(async (request, response) => {
     const draws = await getDraws(lottery, url.searchParams.get('refresh') === '1');
     const limit = Math.min(10000, Math.max(20, Number(url.searchParams.get('limit') || 300)));
     sendJson(response, 200, { lottery, updatedAt: new Date().toISOString(), total: draws.length, data: draws.slice(-limit) });
+    return;
+  }
+
+  if (url.pathname === '/api/recommendations') {
+    if (request.method === 'POST') {
+      try {
+        const snapshot = await parseBody(request);
+        if (!isValidSnapshot(snapshot)) {
+          sendJson(response, 400, { error: 'Invalid recommendation snapshot' });
+          return;
+        }
+        const history = readRecommendationHistory();
+        const id = `${snapshot.lottery}-${snapshot.date}-${snapshot.sourceIssue}`;
+        const normalized = { ...snapshot, id, createdAt: snapshot.createdAt || new Date().toISOString(), status: 'pending', outcome: null };
+        const index = history.findIndex((entry) => entry.id === id);
+        if (index >= 0) history[index] = { ...history[index], ...normalized, createdAt: history[index].createdAt };
+        else history.push(normalized);
+        writeRecommendationHistory(history.slice(-1000));
+        sendJson(response, 201, { id });
+      } catch (_) {
+        sendJson(response, 400, { error: 'Unable to save recommendation snapshot' });
+      }
+      return;
+    }
+
+    if (request.method === 'GET') {
+      const lottery = url.searchParams.get('lottery');
+      const history = readRecommendationHistory();
+      const drawsByLottery = {
+        pl3: await getDraws('pl3'),
+        pl5: await getDraws('pl5')
+      };
+      if (settleRecommendationHistory(history, drawsByLottery)) writeRecommendationHistory(history);
+      const entries = history.filter((entry) => !lottery || entry.lottery === lottery)
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      sendJson(response, 200, { data: entries });
+      return;
+    }
+
+    response.writeHead(405).end('Method not allowed');
     return;
   }
 
