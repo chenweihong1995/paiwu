@@ -119,9 +119,93 @@
           "012/奇偶/大小"
         ],
         "positionCount": 3
+      },
+      {
+        "key": "singles",
+        "label": "单式直选5注",
+        "type": "tickets",
+        "tickets": [
+          "057",
+          "047",
+          "051",
+          "357",
+          "041"
+        ],
+        "picks": [],
+        "cost": 10,
+        "positionCount": 3,
+        "baseline": 0.005,
+        "validationRate": 0,
+        "validationPositionRate": 0
       }
     ],
     "id": "pl3-2026-07-21-2026191",
+    "status": "pending",
+    "outcome": null
+  },
+  {
+    "id": "kl8-2026-07-21-2026191",
+    "lottery": "kl8",
+    "date": "2026-07-21",
+    "sourceIssue": "2026191",
+    "sourceDate": "2026-07-20",
+    "createdAt": "2026-07-21T10:54:03.483Z",
+    "modelVersion": "kl8-short-cycle-30-50-100-v1",
+    "recentWindows": [
+      30,
+      50,
+      100
+    ],
+    "recommendations": [
+      {
+        "key": "ten",
+        "label": "选十推荐",
+        "type": "set",
+        "picks": [
+          "01",
+          "02",
+          "11",
+          "12",
+          "27",
+          "30",
+          "33",
+          "39",
+          "69",
+          "73"
+        ],
+        "cost": null,
+        "positionCount": 20,
+        "baseline": 0.125,
+        "validationRate": 0,
+        "validationPositionRate": 0.12250000000000001,
+        "validationHitAverage": 2.45
+      },
+      {
+        "key": "twelve",
+        "label": "选十二备选",
+        "type": "set",
+        "picks": [
+          "01",
+          "02",
+          "11",
+          "12",
+          "27",
+          "30",
+          "33",
+          "39",
+          "42",
+          "61",
+          "69",
+          "73"
+        ],
+        "cost": null,
+        "positionCount": 20,
+        "baseline": 0.15,
+        "validationRate": 0,
+        "validationPositionRate": 0.14416666666666667,
+        "validationHitAverage": 2.8833333333333333
+      }
+    ],
     "status": "pending",
     "outcome": null
   }

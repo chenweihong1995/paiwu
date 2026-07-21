@@ -1,6 +1,6 @@
 const state = { lottery: 'pl5', draws: [], periods: 50, mode: 'position', lines: true, view: 'overview' };
-const overviewData = { pl3: [], pl5: [] };
-const overviewRecommendations = { pl3: { wide: [], narrow: [] }, pl5: { wide: [], narrow: [] } };
+const overviewData = { pl3: [], pl5: [], kl8: [] };
+const overviewRecommendations = { pl3: { wide: [], narrow: [], singles: [] }, pl5: { wide: [], narrow: [] }, kl8: { ten: [], twelve: [] } };
 const algorithmCaches = { pl3: null, pl5: null };
 const savedDailySnapshots = new Set();
 const LOCAL_REVIEW_HISTORY_KEY = 'lottery-recommendation-history-v1';
@@ -39,8 +39,9 @@ const selectorState = {
 const $ = (selector) => document.querySelector(selector);
 const beijingDate = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' })
   .formatToParts(new Date()).filter((part) => part.type !== 'literal').map((part) => part.value).join('-');
+const isHappy8 = () => state.lottery === 'kl8';
 const digitCount = () => state.lottery === 'pl3' ? 3 : 5;
-const lotteryName = () => state.lottery === 'pl3' ? '排列三' : '排列五';
+const lotteryName = () => state.lottery === 'pl3' ? '排列三' : state.lottery === 'kl8' ? '快乐8' : '排列五';
 const drawDigits = (draw, count) => String(draw?.winnum || '').replace(/<[^>]*>/g, '').replace(/\D/g, '').slice(0, count).padStart(count, '0').split('').map(Number);
 const digits = (draw) => drawDigits(draw, digitCount());
 const sum = (values) => values.reduce((a, b) => a + b, 0);
@@ -48,7 +49,7 @@ const isPrime = (n) => [1, 2, 3, 5, 7].includes(n);
 
 function refreshLotteryConfig() {
   positionNames = state.lottery === 'pl3' ? ['百位', '十位', '个位'] : ['万位', '千位', '百位', '十位', '个位'];
-  trendModes = [...baseTrendModes.slice(0, 2), ...routeModes[state.lottery], ...baseTrendModes.slice(2)];
+  trendModes = isHappy8() ? [] : [...baseTrendModes.slice(0, 2), ...routeModes[state.lottery], ...baseTrendModes.slice(2)];
 }
 
 function metrics(draw, previous) {
@@ -745,6 +746,102 @@ function pl5FrontWidePlan(draws) {
   return createExpandedPlan(backtest, selectBacktestedPlan(backtest, 2), 3);
 }
 
+function pl3SingleTickets(plan, count = 5) {
+  const candidates = [];
+  plan.rankings[0].slice(0, 5).forEach((a, ai) => plan.rankings[1].slice(0, 5).forEach((b, bi) => plan.rankings[2].slice(0, 5).forEach((c, ci) => {
+    candidates.push({ code: `${a}${b}${c}`, score: ai + bi + ci });
+  })));
+  return candidates.sort((a, b) => a.score - b.score || a.code.localeCompare(b.code)).slice(0, count).map((item) => item.code);
+}
+
+function kl8Numbers(draw) {
+  return (String(draw?.winnum || '').match(/\d{1,2}/g) || []).slice(0, 20).map(Number);
+}
+
+function kl8Ranking(draws, end = draws.length) {
+  const counts = Array(81).fill(0);
+  const weights = [30, 50, 100].map((window, index) => ({ window, weight: RECENT_WINDOW_WEIGHTS[index] }));
+  weights.forEach(({ window, weight }) => {
+    const start = Math.max(0, end - window);
+    for (let index = start; index < end; index++) kl8Numbers(draws[index]).forEach((number) => { counts[number] += weight / (end - start || 1); });
+  });
+  const omission = Array(81).fill(0);
+  for (let number = 1; number <= 80; number++) {
+    for (let index = end - 1; index >= Math.max(0, end - 100); index--) {
+      if (kl8Numbers(draws[index]).includes(number)) break;
+      omission[number]++;
+    }
+  }
+  return Array.from({ length: 80 }, (_, index) => index + 1).sort((a, b) => {
+    const scoreA = counts[a] + Math.min(omission[a], 12) / 800;
+    const scoreB = counts[b] + Math.min(omission[b], 12) / 800;
+    return scoreB - scoreA || a - b;
+  });
+}
+
+function kl8Plan(draws, count) {
+  const start = Math.max(100, draws.length - VALIDATION_WINDOW);
+  const records = [];
+  for (let index = start; index < draws.length; index++) {
+    const picks = kl8Ranking(draws, index).slice(0, count);
+    const actual = kl8Numbers(draws[index]);
+    records.push(actual.filter((number) => picks.includes(number)).length);
+  }
+  const averageHits = records.length ? records.reduce((total, hits) => total + hits, 0) / records.length : 0;
+  return {
+    picks: kl8Ranking(draws).slice(0, count).sort((a, b) => a - b),
+    averageHits,
+    validationSize: records.length,
+    validationPositionRate: averageHits / 20,
+    baseline: count / 80
+  };
+}
+
+function saveKl8DailyRecommendation(draws, tenPlan, twelvePlan) {
+  const latest = draws[draws.length - 1];
+  if (!latest) return;
+  const key = `kl8-${beijingDate()}-${latest.issue}`;
+  if (savedDailySnapshots.has(key)) return;
+  savedDailySnapshots.add(key);
+  const snapshotPlan = (keyName, label, plan) => ({
+    key: keyName, label, type: 'set', picks: plan.picks.map((number) => String(number).padStart(2, '0')),
+    cost: null, positionCount: 20, baseline: plan.baseline, validationRate: 0,
+    validationPositionRate: plan.validationPositionRate, validationHitAverage: plan.averageHits
+  });
+  const snapshot = {
+    id: key, lottery: 'kl8', date: beijingDate(), sourceIssue: String(latest.issue), sourceDate: latest.kjdate,
+    createdAt: new Date().toISOString(), modelVersion: 'kl8-short-cycle-30-50-100-v1', recentWindows: RECENT_WINDOWS,
+    recommendations: [snapshotPlan('ten', '选十推荐', tenPlan), snapshotPlan('twelve', '选十二备选', twelvePlan)], status: 'pending', outcome: null
+  };
+  saveLocalReviewEntry(snapshot);
+  fetch('/api/recommendations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot) })
+    .catch(() => savedDailySnapshots.delete(key));
+}
+
+function renderKl8Overview(draws) {
+  const tenPlan = kl8Plan(draws, 10);
+  const twelvePlan = kl8Plan(draws, 12);
+  overviewRecommendations.kl8.ten = tenPlan.picks;
+  overviewRecommendations.kl8.twelve = twelvePlan.picks;
+  const format = (numbers) => numbers.map((number) => String(number).padStart(2, '0')).join(' ');
+  $('#kl8-ten-code').textContent = format(tenPlan.picks);
+  $('#kl8-twelve-code').textContent = format(twelvePlan.picks);
+  $('#kl8-ten-meta').textContent = `近${tenPlan.validationSize}期验证`;
+  $('#kl8-twelve-meta').textContent = `近${twelvePlan.validationSize}期验证`;
+  $('#kl8-ten-note').textContent = `平均命中${tenPlan.averageHits.toFixed(2)}个 · 号码覆盖${(tenPlan.validationPositionRate * 100).toFixed(1)}% · 理论12.5%`;
+  $('#kl8-twelve-note').textContent = `平均命中${twelvePlan.averageHits.toFixed(2)}个 · 号码覆盖${(twelvePlan.validationPositionRate * 100).toFixed(1)}% · 理论15.0%`;
+  const zones = Array.from({ length: 8 }, (_, zone) => {
+    const selected = tenPlan.picks.filter((number) => Math.floor((number - 1) / 10) === zone).length;
+    return `${zone + 1}区${selected}`;
+  });
+  $('#kl8-zone-code').textContent = zones.join(' ');
+  $('#kl8-zone-note').textContent = `选十分布 · ${format(tenPlan.picks)}`;
+  $('#kl8-algorithm-summary').textContent = `近30/50/100期按45%/35%/20%评分，后${tenPlan.validationSize}期滚动验证`;
+  $('#kl8-hit-rate').textContent = `选十平均命中：${tenPlan.averageHits.toFixed(2)}个 · 理论2.50个`;
+  $('#kl8-coverage-rate').textContent = `号码覆盖率：${(tenPlan.validationPositionRate * 100).toFixed(1)}% · 理论12.5%`;
+  saveKl8DailyRecommendation(draws, tenPlan, twelvePlan);
+}
+
 function planSnapshot(key, label, plan, positionCount) {
   const bets = plan.picks.reduce((total, picks) => total * picks.length, 1);
   return {
@@ -788,7 +885,7 @@ function mergeReviewEntries(serverEntries) {
   return [...merged.values()].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
-function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount) {
+function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount, singleTickets = []) {
   const latest = draws[draws.length - 1];
   if (!latest) return;
   const key = `${lottery}-${beijingDate()}-${latest.issue}`;
@@ -806,7 +903,8 @@ function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount
     recentSignalWeight: narrowPlan.recentSignalWeight,
     recommendations: [
       planSnapshot('wide', `${wideCount}码直选复式`, widePlan, positionCount),
-      planSnapshot('narrow', `${narrowCount}码直选复式`, narrowPlan, positionCount)
+      planSnapshot('narrow', `${narrowCount}码直选复式`, narrowPlan, positionCount),
+      ...(singleTickets.length ? [{ key: 'singles', label: `单式直选${singleTickets.length}注`, type: 'tickets', tickets: singleTickets, picks: [], cost: singleTickets.length * 2, positionCount, baseline: singleTickets.length / 1000, validationRate: 0, validationPositionRate: 0 }] : [])
     ]
   };
   snapshot.id = `${lottery}-${snapshot.date}-${snapshot.sourceIssue}`;
@@ -830,6 +928,8 @@ function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
   const widePlan = createExpandedPlan(backtest, narrowPlan, wideCount, isPl3 ? requiredWidePlan : null);
   overviewRecommendations[lottery].wide = widePlan.picks;
   overviewRecommendations[lottery].narrow = narrowPlan.picks;
+  const singleTickets = isPl3 ? pl3SingleTickets(narrowPlan) : [];
+  overviewRecommendations[lottery].singles = singleTickets;
   const aggregate = Array.from({ length: 10 }, (_, digit) => ({
     digit,
     score: narrowPlan.rankings.reduce((total, ranking) => total + (10 - ranking.indexOf(digit)), 0)
@@ -864,7 +964,12 @@ function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
     $('#daily-group3-detail').textContent = `${a}${a}${b}、${a}${b}${a}、${b}${a}${a}、${a}${b}${b}、${b}${a}${b}、${b}${b}${a}`;
     $('#daily-group6').textContent = group6.join(' ');
     $('#daily-group6-detail').textContent = '6个互异候选号，组合数C(6,3)';
+    $('.pl3-single-daily').hidden = false;
+    $('#daily-single-straight').textContent = singleTickets.join(' ');
+    $('#daily-single-meta').textContent = `${singleTickets.length}注 · ${singleTickets.length * 2}元`;
+    $('#daily-single-note').textContent = `分位综合排序前${singleTickets.length}组 · 理论${(singleTickets.length / 10).toFixed(1)}%`;
   } else {
+    $('.pl3-single-daily').hidden = true;
     const positionLine = narrowPlan.rankings.map((ranking) => ranking[0]);
     const routeLine = positionLine.map((digit) => digit % 3);
     $('#daily-special-one-title').textContent = '单码定位参考';
@@ -876,7 +981,7 @@ function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
     $('#daily-group6').textContent = routeLine.join(' ');
     $('#daily-group6-detail').textContent = '万、千、百、十、个位依次对应的012路';
   }
-  saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount);
+  saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount, singleTickets);
 }
 
 function renderBacktestedRecommendation(count) {
@@ -972,20 +1077,32 @@ function renderPl5OverviewFocus(pl5) {
 function renderOverview() {
   const pl3 = overviewData.pl3;
   const pl5 = overviewData.pl5;
-  if (!pl3.length || !pl5.length) return;
+  const kl8 = overviewData.kl8;
+  if (!pl3.length || !pl5.length || !kl8.length) return;
   const pl3Latest = pl3[pl3.length - 1];
   const pl5Latest = pl5[pl5.length - 1];
+  const kl8Latest = kl8[kl8.length - 1];
   const activeDraws = overviewData[state.lottery];
   const activeLatest = activeDraws[activeDraws.length - 1];
   $('#overview-pl3-latest').textContent = drawDigits(pl3Latest, 3).join(' ');
   $('#overview-pl3-issue').textContent = `${pl3Latest.issue}期 · ${pl3Latest.kjdate}`;
   $('#overview-pl5-latest').textContent = drawDigits(pl5Latest, 5).join(' ');
   $('#overview-pl5-issue').textContent = `${pl5Latest.issue}期 · ${pl5Latest.kjdate}`;
+  $('#overview-kl8-latest').textContent = kl8Numbers(kl8Latest).slice(0, 5).map((number) => String(number).padStart(2, '0')).join(' ');
+  $('#overview-kl8-issue').textContent = `${kl8Latest.issue}期 · ${kl8Latest.kjdate}`;
   $('#overview-pl3-latest').closest('div').classList.toggle('active', state.lottery === 'pl3');
   $('#overview-pl5-latest').closest('div').classList.toggle('active', state.lottery === 'pl5');
+  $('#overview-kl8-latest').closest('div').classList.toggle('active', state.lottery === 'kl8');
   $('#overview-title').textContent = `${lotteryName()}今日研判`;
   $('#overview-lottery-badge').textContent = lotteryName();
   $('#overview-date').textContent = `${new Date().toISOString().slice(0, 10)} · 数据更新至${activeLatest.issue}期 · 每日方案已固定`;
+  $('#kl8-daily-band').hidden = state.lottery !== 'kl8';
+  document.querySelector('.daily-band').hidden = state.lottery === 'kl8';
+  $('#overview-focus-band').hidden = state.lottery === 'kl8';
+  if (state.lottery === 'kl8') {
+    renderKl8Overview(kl8);
+    return;
+  }
   $('#open-pl3-route').textContent = state.lottery === 'pl3' ? '查看012直选图' : '查看012走势图';
   const requiredWidePlan = state.lottery === 'pl3' ? pl5FrontWidePlan(pl5) : null;
   buildDailyOverview(activeDraws, state.lottery, requiredWidePlan);
@@ -994,7 +1111,7 @@ function renderOverview() {
 }
 
 async function loadOverviewData(refresh = false) {
-  const missing = ['pl3', 'pl5'].filter((lottery) => refresh || !overviewData[lottery].length);
+  const missing = ['pl3', 'pl5', 'kl8'].filter((lottery) => refresh || !overviewData[lottery].length);
   await Promise.all(missing.map(async (lottery) => {
     const response = await fetch(`/api/draws?lottery=${lottery}&limit=10000${refresh ? '&refresh=1' : ''}`);
     const result = await response.json();
@@ -1023,7 +1140,8 @@ function reviewDirection(entries) {
   const observations = settled.flatMap((entry) => entry.recommendations.map((recommendation) => {
     const outcome = entry.outcome?.results?.find((result) => result.key === recommendation.key);
     const actualRate = outcome ? outcome.positionHitCount / recommendation.positionCount : 0;
-    const expectedRate = recommendation.picks.reduce((total, picks) => total + picks.length / 10, 0) / recommendation.positionCount;
+    const expectedRate = recommendation.type === 'set' ? recommendation.picks.length / 80
+      : recommendation.type === 'tickets' ? 0 : recommendation.picks.reduce((total, picks) => total + picks.length / 10, 0) / recommendation.positionCount;
     return { actualRate, expectedRate, fullHit: outcome?.fullHit };
   }));
   const actual = observations.reduce((total, item) => total + item.actualRate, 0) / observations.length;
@@ -1041,17 +1159,22 @@ function renderReviewRows(entries) {
   $('#review-body').innerHTML = entries.length ? entries.map((entry) => {
     const recommendations = entry.recommendations || [];
     const outcomeByKey = new Map((entry.outcome?.results || []).map((result) => [result.key, result]));
-    const ticket = recommendations.map((recommendation) => `<div class="review-ticket"><small>${recommendation.label} · ${recommendation.cost}元</small>${recommendation.picks.join('-')}</div>`).join('');
-    const validation = recommendations.map((recommendation) => `<div><small>${recommendation.label}</small>整注 ${(recommendation.validationRate * 100).toFixed(1)}% · 分位 ${(recommendation.validationPositionRate * 100).toFixed(1)}%</div>`).join('');
+    const ticket = recommendations.map((recommendation) => {
+      const code = recommendation.type === 'tickets' ? recommendation.tickets.join(' ') : recommendation.type === 'set' ? recommendation.picks.join(' ') : recommendation.picks.join('-');
+      return `<div class="review-ticket"><small>${recommendation.label}${recommendation.cost ? ` · ${recommendation.cost}元` : ''}</small>${code}</div>`;
+    }).join('');
+    const validation = recommendations.map((recommendation) => `<div><small>${recommendation.label}</small>${recommendation.type === 'set' ? `平均命中 ${recommendation.validationHitAverage.toFixed(2)}个 · 覆盖 ${(recommendation.validationPositionRate * 100).toFixed(1)}%` : `整注 ${(recommendation.validationRate * 100).toFixed(1)}% · 分位 ${(recommendation.validationPositionRate * 100).toFixed(1)}%`}</div>`).join('');
     const result = entry.status === 'settled'
       ? `<div class="review-result"><strong>${entry.outcome.targetIssue}期 · ${entry.outcome.actual}</strong><small>${entry.outcome.targetDate}</small></div>`
       : '<span class="review-status pending">待下一期开奖</span>';
     const verdict = entry.status === 'settled' ? recommendations.map((recommendation) => {
       const item = outcomeByKey.get(recommendation.key);
+      if (recommendation.type === 'set') return `<div class="review-status ${item.positionHitCount ? 'hit' : 'miss'}">${recommendation.label} 命中${item.positionHitCount}个<small>${item.hitNumbers.join(' ')}</small></div>`;
       const status = item.fullHit ? 'hit' : 'miss';
       return `<div class="review-status ${status}">${recommendation.label}${item.fullHit ? ' 命中' : ' 未中'}<small>分位覆盖 ${item.positionHitCount}/${recommendation.positionCount}</small></div>`;
     }).join('') : '<span class="review-status pending">等待核对</span>';
-    return `<tr><td>${entry.date}</td><td>${entry.lottery === 'pl3' ? '排列三' : '排列五'}</td><td>${entry.sourceIssue}期<br><small>${entry.sourceDate}</small></td><td>${ticket}</td><td>${validation}</td><td>${result}</td><td>${verdict}</td></tr>`;
+    const label = entry.lottery === 'pl3' ? '排列三' : entry.lottery === 'kl8' ? '快乐8' : '排列五';
+    return `<tr><td>${entry.date}</td><td>${label}</td><td>${entry.sourceIssue}期<br><small>${entry.sourceDate}</small></td><td>${ticket}</td><td>${validation}</td><td>${result}</td><td>${verdict}</td></tr>`;
   }).join('') : '<tr><td colspan="7">暂无保存的推荐。打开研判主板后，今日排三和排五方案会自动归档。</td></tr>';
 }
 
@@ -1390,6 +1513,7 @@ function copyTicketNotation() {
 }
 
 function showView(view) {
+  if (isHappy8() && !['overview', 'review'].includes(view)) view = 'overview';
   state.view = view;
   document.querySelectorAll('.nav-item').forEach((button) => button.classList.toggle('active', button.dataset.view === view));
   document.querySelectorAll('.view-panel').forEach((panel) => panel.classList.toggle('active', panel.id === `${view}-view`));
@@ -1439,9 +1563,10 @@ async function loadData(refresh = false) {
     $('#custom-period').max = state.draws.length;
     $('#custom-period').title = `可输入1至${state.draws.length}期`;
     const latest = state.draws[state.draws.length - 1];
-    $('#latest-number').textContent = digits(latest).join(' ');
+    $('#latest-number').textContent = isHappy8() ? kl8Numbers(latest).slice(0, 5).map((number) => String(number).padStart(2, '0')).join(' ') : digits(latest).join(' ');
     $('#latest-issue').textContent = `${latest.issue}期 · ${latest.kjdate}`;
-    renderTrend(); generateRecommendation(); renderOverview();
+    if (!isHappy8()) { renderTrend(); generateRecommendation(); }
+    renderOverview();
     if (state.view === 'selector') renderSelector();
     if (refresh) toast('开奖数据已刷新');
   } catch (error) {
@@ -1453,6 +1578,7 @@ async function switchLottery(lottery) {
   if (lottery === state.lottery) return;
   state.lottery = lottery;
   refreshLotteryConfig();
+  if (isHappy8()) state.view = 'overview';
   if (!trendModes.some(([id]) => id === state.mode)) state.mode = 'position';
   selectorState.picks = Array.from({ length: digitCount() }, () => new Set());
   selectorState.locked = Array(digitCount()).fill(false);
@@ -1461,14 +1587,15 @@ async function switchLottery(lottery) {
   Object.values(selectorState.filters).forEach((value) => { if (value instanceof Set) value.clear(); });
   selectorState.filters.consecutive = 'any';
   document.querySelectorAll('[data-lottery]').forEach((button) => button.classList.toggle('active', button.dataset.lottery === lottery));
-  $('#brand-mark').textContent = lottery === 'pl3' ? '3' : '5';
+  document.querySelectorAll('.nav-item').forEach((button) => { button.hidden = isHappy8() && !['overview', 'review'].includes(button.dataset.view); });
+  $('#brand-mark').textContent = lottery === 'pl3' ? '3' : lottery === 'kl8' ? '8' : '5';
   document.title = `${lotteryName()}研判台`;
   $('#sum-min').max = digitCount() * 9;
   $('#sum-max').max = digitCount() * 9;
   $('#sum-filter-help').textContent = `${digitCount()}位数字之和，范围0-${digitCount() * 9}`;
   $('#distinct-filter-help').textContent = `${digitCount()}表示${digitCount()}个数字全不同`;
   buildMenu();
-  renderSelector();
+  if (!isHappy8()) renderSelector();
   await loadData();
   showView(state.view);
 }
@@ -1485,6 +1612,16 @@ async function useOverviewPick(key) {
   toast(`已带入${picks[0].length}码直选复式`);
 }
 
+function copyDailySingles() {
+  const tickets = overviewRecommendations.pl3.singles;
+  if (!tickets.length) return;
+  const text = `排列三单式直选 ${tickets.join(' ')} · 共${tickets.length}注${tickets.length * 2}元`;
+  const fallback = () => { const area = document.createElement('textarea'); area.value = text; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); };
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(fallback);
+  else fallback();
+  toast('单式直选票已复制');
+}
+
 function openOverviewRoute() {
   state.mode = state.lottery === 'pl3' ? 'route-direct' : 'route-main';
   buildMenu();
@@ -1498,6 +1635,7 @@ document.querySelectorAll('[data-lottery]').forEach((button) => button.addEventL
 document.querySelectorAll('.nav-item').forEach((button) => button.addEventListener('click', () => showView(button.dataset.view)));
 document.querySelectorAll('[data-use-overview]').forEach((button) => button.addEventListener('click', () => useOverviewPick(button.dataset.useOverview)));
 $('#open-pl3-route').addEventListener('click', openOverviewRoute);
+$('#copy-daily-singles').addEventListener('click', copyDailySingles);
 $('#period-select').addEventListener('change', (event) => {
   const value = event.target.value;
   $('#custom-period-wrap').classList.toggle('show', value === 'custom');

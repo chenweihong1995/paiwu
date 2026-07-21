@@ -10,7 +10,8 @@ const SNAPSHOT = path.join(__dirname, 'data', 'pl5-history.json');
 const RECOMMENDATION_HISTORY = path.join(__dirname, 'data', 'recommendation-history.json');
 const DATA_URLS = {
   pl3: 'https://tb.tuganjue.com/api/pl3/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all',
-  pl5: 'https://tb.tuganjue.com/api/pl5/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all'
+  pl5: 'https://tb.tuganjue.com/api/pl5/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all',
+  kl8: 'https://tb.tuganjue.com/api/kl8/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all'
 };
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -20,16 +21,21 @@ const MIME = {
   '.svg': 'image/svg+xml'
 };
 
-const caches = { pl3: null, pl5: null };
-const cacheTimes = { pl3: 0, pl5: 0 };
+const caches = { pl3: null, pl5: null, kl8: null };
+const cacheTimes = { pl3: 0, pl5: 0, kl8: 0 };
 
 function normalizeDraw(draw, lottery) {
+  if (lottery === 'kl8') {
+    const numbers = String(draw.winnum || '').replace(/<[^>]*>/g, ' ').match(/\d{1,2}/g) || [];
+    return { ...draw, winnum: numbers.slice(0, 20).map((number) => number.padStart(2, '0')).join(' ') };
+  }
   const count = lottery === 'pl3' ? 3 : 5;
   const clean = String(draw.winnum || '').replace(/<[^>]*>/g, '').replace(/\D/g, '').slice(0, count).padStart(count, '0');
   return { ...draw, winnum: clean.split('').join(' ') };
 }
 
 function readSnapshot(lottery) {
+  if (lottery === 'kl8') return [];
   const raw = JSON.parse(fs.readFileSync(SNAPSHOT, 'utf8'));
   return (raw.data?.data || raw.data || []).map((draw) => normalizeDraw(draw, lottery));
 }
@@ -111,7 +117,7 @@ function parseBody(request) {
 }
 
 function isValidSnapshot(snapshot) {
-  return snapshot && ['pl3', 'pl5'].includes(snapshot.lottery) && /^\d+$/.test(String(snapshot.sourceIssue || ''))
+  return snapshot && ['pl3', 'pl5', 'kl8'].includes(snapshot.lottery) && /^\d+$/.test(String(snapshot.sourceIssue || ''))
     && /^\d{4}-\d{2}-\d{2}$/.test(String(snapshot.date || '')) && Array.isArray(snapshot.recommendations)
     && snapshot.recommendations.length > 0 && snapshot.recommendations.length <= 4;
 }
@@ -125,6 +131,16 @@ function settleRecommendationHistory(history, drawsByLottery) {
     if (!target) return;
     const actual = normalizeDraw(target, entry.lottery).winnum.replace(/\s/g, '');
     const results = entry.recommendations.map((recommendation) => {
+      if (recommendation.type === 'set') {
+        const actualNumbers = actual.match(/\d{2}/g) || [];
+        const hitNumbers = actualNumbers.filter((number) => recommendation.picks.includes(number));
+        return { key: recommendation.key, fullHit: false, positionHits: [], positionHitCount: hitNumbers.length, hitNumbers };
+      }
+      if (recommendation.type === 'tickets') {
+        const tickets = recommendation.tickets || [];
+        const positionHitCount = tickets.reduce((best, ticket) => Math.max(best, [...ticket].filter((digit, index) => digit === actual[index]).length), 0);
+        return { key: recommendation.key, fullHit: tickets.includes(actual), positionHits: [], positionHitCount };
+      }
       const picks = recommendation.picks || [];
       const positionHits = picks.map((list, position) => String(list).includes(actual[position]));
       return {
@@ -147,7 +163,8 @@ function settleRecommendationHistory(history, drawsByLottery) {
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
   if (url.pathname === '/api/draws') {
-    const lottery = url.searchParams.get('lottery') === 'pl3' ? 'pl3' : 'pl5';
+    const requestedLottery = url.searchParams.get('lottery');
+    const lottery = ['pl3', 'pl5', 'kl8'].includes(requestedLottery) ? requestedLottery : 'pl5';
     const draws = await getDraws(lottery, url.searchParams.get('refresh') === '1');
     const limit = Math.min(10000, Math.max(20, Number(url.searchParams.get('limit') || 300)));
     sendJson(response, 200, { lottery, updatedAt: new Date().toISOString(), total: draws.length, data: draws.slice(-limit) });
@@ -181,7 +198,8 @@ const server = http.createServer(async (request, response) => {
       const history = readRecommendationHistory();
       const drawsByLottery = {
         pl3: await getDraws('pl3'),
-        pl5: await getDraws('pl5')
+        pl5: await getDraws('pl5'),
+        kl8: await getDraws('kl8')
       };
       if (settleRecommendationHistory(history, drawsByLottery)) writeRecommendationHistory(history);
       const entries = history.filter((entry) => !lottery || entry.lottery === lottery)

@@ -13,7 +13,7 @@
       <span class="brand-mark" id="brand-mark">5</span>
       <div><strong id="app-title">排列研判台</strong><small>历史走势与概率分析</small></div>
       <div class="lottery-switch" role="group" aria-label="彩种切换">
-        <button data-lottery="pl3">排列三</button><button class="active" data-lottery="pl5">排列五</button>
+        <button data-lottery="pl3">排列三</button><button class="active" data-lottery="pl5">排列五</button><button data-lottery="kl8">快乐8</button>
       </div>
     </div>
     <nav class="topnav" aria-label="主导航">
@@ -70,6 +70,7 @@
             <div class="overview-latest">
               <div><span>排列三最新</span><strong id="overview-pl3-latest">---</strong><small id="overview-pl3-issue">加载中</small></div>
               <div><span>排列五最新</span><strong id="overview-pl5-latest">-----</strong><small id="overview-pl5-issue">加载中</small></div>
+              <div><span>快乐8最新</span><strong id="overview-kl8-latest">--</strong><small id="overview-kl8-issue">加载中</small></div>
             </div>
           </header>
 
@@ -80,6 +81,7 @@
               <article class="daily-item"><header><strong id="daily-narrow-title">2码直选复式</strong><span id="daily-three-meta">32注 · 64元</span></header><div class="daily-code" id="daily-three">--</div><p id="daily-three-note">正在执行滚动回测...</p><button data-use-overview="narrow">带入选号</button></article>
               <article class="daily-item"><header><strong id="daily-special-one-title">单码定位参考</strong><span id="daily-special-one-meta">1注 · 2元</span></header><div class="daily-code compact" id="daily-group3">--</div><p id="daily-group3-detail">五个位置的模型首选</p></article>
               <article class="daily-item"><header><strong id="daily-special-two-title">012路定位参考</strong><span id="daily-special-two-meta">结构观察</span></header><div class="daily-code compact" id="daily-group6">--</div><p id="daily-group6-detail">按定位首选号码折算</p></article>
+              <article class="daily-item pl3-single-daily" hidden><header><strong>单式直选推荐</strong><span id="daily-single-meta">5注 · 10元</span></header><div class="daily-code compact" id="daily-single-straight">---</div><p id="daily-single-note">按分位综合排序生成</p><button id="copy-daily-singles">复制单式</button></article>
             </div>
             <div class="algorithm-audit">
               <div><strong>算法回测表现</strong><span id="algorithm-summary">准备30、50、100期多尺度比较...</span></div>
@@ -87,7 +89,17 @@
             </div>
           </section>
 
-          <section class="overview-band">
+          <section class="overview-band kl8-daily-band" id="kl8-daily-band" hidden>
+            <div class="band-heading"><div><h2>快乐8今日号码方案</h2><p>近30、50、100期号码频率为主，少量参考当前遗漏；开奖号码每期随机，推荐仅作筛选</p></div><span>快乐8</span></div>
+            <div class="daily-grid kl8-grid">
+              <article class="daily-item primary-daily"><header><strong>10码推荐</strong><span id="kl8-ten-meta">--</span></header><div class="daily-code" id="kl8-ten-code">--</div><p id="kl8-ten-note">正在计算近期开奖覆盖...</p></article>
+              <article class="daily-item"><header><strong>12码备选</strong><span id="kl8-twelve-meta">--</span></header><div class="daily-code" id="kl8-twelve-code">--</div><p id="kl8-twelve-note">正在计算近期开奖覆盖...</p></article>
+              <article class="daily-item"><header><strong>冷热分区</strong><span>近100期</span></header><div class="daily-code compact" id="kl8-zone-code">--</div><p id="kl8-zone-note">1-80按十位区统计</p></article>
+            </div>
+            <div class="algorithm-audit"><div><strong>快乐8回测表现</strong><span id="kl8-algorithm-summary">准备30、50、100期滚动验证...</span></div><div class="algorithm-models"><span id="kl8-hit-rate">平均命中：--</span><span id="kl8-coverage-rate">号码覆盖率：--</span></div></div>
+          </section>
+
+          <section class="overview-band" id="overview-focus-band">
             <div class="band-heading"><div><h2>高遗漏关注</h2><p>按当前遗漏从高到低排列，只作历史统计观察</p></div><button id="open-pl3-route" class="secondary-button">查看012直选图</button></div>
             <div class="focus-grid">
               <article class="focus-group"><header><strong id="focus-route-title">012直选形态</strong><span id="focus-route-meta">243种</span></header><div id="focus-route" class="focus-list"><span class="loading-line">计算中...</span></div></article>
