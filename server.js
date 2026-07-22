@@ -139,7 +139,7 @@ function settleRecommendationHistory(history, drawsByLottery) {
       if (recommendation.type === 'tickets') {
         const tickets = recommendation.tickets || [];
         const positionHitCount = tickets.reduce((best, ticket) => Math.max(best, [...ticket].filter((digit, index) => digit === actual[index]).length), 0);
-        return { key: recommendation.key, fullHit: tickets.includes(actual), positionHits: [], positionHitCount };
+        return { key: recommendation.key, fullHit: tickets.includes(actual), ticketHitCount: tickets.filter((ticket) => ticket === actual).length, positionHits: [], positionHitCount };
       }
       const picks = recommendation.picks || [];
       const positionHits = picks.map((list, position) => String(list).includes(actual[position]));
@@ -158,6 +158,25 @@ function settleRecommendationHistory(history, drawsByLottery) {
     }
   });
   return changed;
+}
+
+function reviewAdaptation(history, lottery) {
+  const settled = history.filter((entry) => entry.lottery === lottery && entry.status === 'settled');
+  const observations = settled.flatMap((entry) => entry.recommendations.map((recommendation) => {
+    const result = entry.outcome?.results?.find((item) => item.key === recommendation.key);
+    if (!result || recommendation.type === 'tickets') return null;
+    const actual = result.positionHitCount / recommendation.positionCount;
+    const expected = recommendation.type === 'set' ? recommendation.picks.length / 80
+      : recommendation.picks.reduce((total, picks) => total + picks.length / 10, 0) / recommendation.positionCount;
+    return { actual, expected };
+  }).filter(Boolean));
+  const base = [.45, .35, .2];
+  if (observations.length < 5) return { weights: base, sampleSize: observations.length, direction: '样本不足5档，保持基础权重' };
+  const recent = observations.slice(-Math.min(5, observations.length));
+  const delta = recent.reduce((total, item) => total + item.actual - item.expected, 0) / recent.length;
+  if (delta <= -.04) return { weights: [.3, .35, .35], sampleSize: observations.length, direction: '近期覆盖偏低，降低30期权重并提高100期权重' };
+  if (delta >= .04) return { weights: [.55, .3, .15], sampleSize: observations.length, direction: '近期覆盖偏高，适度提高30期权重' };
+  return { weights: base, sampleSize: observations.length, direction: '近期覆盖接近理论，保持基础权重' };
 }
 
 const server = http.createServer(async (request, response) => {
@@ -204,7 +223,7 @@ const server = http.createServer(async (request, response) => {
       if (settleRecommendationHistory(history, drawsByLottery)) writeRecommendationHistory(history);
       const entries = history.filter((entry) => !lottery || entry.lottery === lottery)
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-      sendJson(response, 200, { data: entries });
+      sendJson(response, 200, { data: entries, adaptation: reviewAdaptation(history, lottery) });
       return;
     }
 

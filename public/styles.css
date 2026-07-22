@@ -175,6 +175,9 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .review-table-wrap { height: calc(100vh - 330px); }
 .review-ticket { min-width: 210px; color: #263741; font-weight: 700; letter-spacing: 1px; line-height: 1.7; }
 .review-ticket small, .review-result small { display: block; color: var(--muted); font-weight: 400; letter-spacing: 0; }
+.review-number { display: inline-grid; min-width: 18px; place-items: center; color: #43515c; }
+.review-number.hit-number { color: #fff; background: var(--red); border-radius: 50%; font-weight: 800; }
+.review-separator { display: inline-block; padding: 0 3px; color: #a0aab1; font-style: normal; }
 .review-result { min-width: 130px; }
 .review-status { font-weight: 700; }
 .review-status.pending { color: var(--gold); }

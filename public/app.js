@@ -9,7 +9,10 @@ const BACKTEST_WINDOW = 600;
 const VALIDATION_WINDOW = 180;
 const WEIGHT_VALIDATION_WINDOW = 100;
 const RECENT_WINDOWS = [30, 50, 100];
-const RECENT_WINDOW_WEIGHTS = [.45, .35, .2];
+const BASE_RECENT_WINDOW_WEIGHTS = [.45, .35, .2];
+const adaptiveWindowWeights = { pl3: BASE_RECENT_WINDOW_WEIGHTS, pl5: BASE_RECENT_WINDOW_WEIGHTS, kl8: BASE_RECENT_WINDOW_WEIGHTS };
+const adaptiveDirections = { pl3: '基础权重', pl5: '基础权重', kl8: '基础权重' };
+let tuningVersion = 0;
 const RECENT_WEIGHT_CANDIDATES = [.6, .7, .8, .9];
 let positionNames = ['万位', '千位', '百位', '十位', '个位'];
 let trendModes = [];
@@ -37,6 +40,8 @@ const selectorState = {
 };
 
 const $ = (selector) => document.querySelector(selector);
+const recentWindowWeights = (lottery = state.lottery) => adaptiveWindowWeights[lottery] || BASE_RECENT_WINDOW_WEIGHTS;
+const recentWeightLabel = (lottery = state.lottery) => recentWindowWeights(lottery).map((weight) => `${Math.round(weight * 100)}%`).join('/');
 const beijingDate = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' })
   .formatToParts(new Date()).filter((part) => part.type !== 'literal').map((part) => part.value).join('-');
 const isHappy8 = () => state.lottery === 'kl8';
@@ -487,7 +492,7 @@ function modelRankingsAt(series, end, position) {
 }
 
 function createBacktest(draws, lottery = state.lottery) {
-  const signature = `${draws.length}:${draws[draws.length - 1]?.issue || ''}`;
+  const signature = `${draws.length}:${draws[draws.length - 1]?.issue || ''}:${tuningVersion}`;
   if (algorithmCaches[lottery]?.signature === signature) return algorithmCaches[lottery];
   const positionCount = lottery === 'pl3' ? 3 : 5;
   const series = draws.map((draw) => drawDigits(draw, positionCount));
@@ -502,6 +507,7 @@ function createBacktest(draws, lottery = state.lottery) {
   }
   algorithmCaches[lottery] = {
     signature,
+    lottery,
     positionCount,
     records,
     currentRanks: Array.from({ length: positionCount }, (_, position) => modelRankingsAt(series, series.length, position)),
@@ -538,23 +544,23 @@ function recencyBlendWeights(recentWeight) {
     ? recentWeight / recentCount : (1 - recentWeight) / stabilityCount);
 }
 
-function strategySelectionScore(trainingRecords, position, strategy, count, recentWeight) {
+function strategySelectionScore(trainingRecords, position, strategy, count, recentWeight, windowWeights) {
   const hitRate = (records) => records.length ? records.filter((record) =>
     record.candidateRankings[position][strategy].slice(0, count).includes(record.actual[position])).length / records.length : 0;
   const recentRate = RECENT_WINDOWS.reduce((total, window, index) =>
-    total + hitRate(trainingRecords.slice(-window)) * RECENT_WINDOW_WEIGHTS[index], 0);
+    total + hitRate(trainingRecords.slice(-window)) * windowWeights[index], 0);
   const stabilityRecords = trainingRecords.slice(0, Math.max(0, trainingRecords.length - RECOMMENDATION_WINDOW));
   const stabilityRate = hitRate(stabilityRecords.length ? stabilityRecords : trainingRecords);
   return recentRate * recentWeight + stabilityRate * (1 - recentWeight);
 }
 
-function selectCandidateStrategies(trainingRecords, positionCount, count, modelCount, recentWeight) {
+function selectCandidateStrategies(trainingRecords, positionCount, count, modelCount, recentWeight, windowWeights) {
   const strategyCount = modelCount + 3;
   return Array.from({ length: positionCount }, (_, position) => {
     let bestStrategy = 0;
     let bestScore = -1;
     for (let strategy = 0; strategy < modelCount; strategy++) {
-      const score = strategySelectionScore(trainingRecords, position, strategy, count, recentWeight);
+      const score = strategySelectionScore(trainingRecords, position, strategy, count, recentWeight, windowWeights);
       if (score > bestScore) {
         bestScore = score;
         bestStrategy = strategy;
@@ -562,7 +568,7 @@ function selectCandidateStrategies(trainingRecords, positionCount, count, modelC
     }
     const fusionMinimumGain = .01;
     for (let strategy = modelCount; strategy < strategyCount; strategy++) {
-      const score = strategySelectionScore(trainingRecords, position, strategy, count, recentWeight);
+      const score = strategySelectionScore(trainingRecords, position, strategy, count, recentWeight, windowWeights);
       if (score >= bestScore + fusionMinimumGain) {
         bestScore = score;
         bestStrategy = strategy;
@@ -608,6 +614,7 @@ function selectBacktestedPlan(backtest, count) {
   const planKey = `auto-weight:${count}`;
   if (backtest.plans[planKey]) return backtest.plans[planKey];
   const modelCount = modelDefinitions.length;
+  const windowWeights = recentWindowWeights(backtest.lottery);
   const recencyStrategy = modelCount;
   const equalStrategy = modelCount + 1;
   const onlineStrategy = modelCount + 2;
@@ -654,7 +661,7 @@ function selectBacktestedPlan(backtest, count) {
     const weightedRecords = recordsForWeight(recentWeight);
     const weightTraining = weightedRecords.slice(0, weightTrainingSize);
     const weightValidation = weightedRecords.slice(weightTrainingSize, split);
-    const strategies = selectCandidateStrategies(weightTraining, backtest.positionCount, count, modelCount, recentWeight);
+    const strategies = selectCandidateStrategies(weightTraining, backtest.positionCount, count, modelCount, recentWeight, windowWeights);
     const metrics = candidateValidationMetrics(weightValidation, strategies, count, backtest.positionCount);
     return {
       recentWeight,
@@ -670,7 +677,7 @@ function selectBacktestedPlan(backtest, count) {
   const strategyRecords = selectedTrial.weightedRecords;
   const trainingRecords = strategyRecords.slice(0, split);
   const selectedStrategies = selectCandidateStrategies(
-    trainingRecords, backtest.positionCount, count, modelCount, selectedRecentWeight
+    trainingRecords, backtest.positionCount, count, modelCount, selectedRecentWeight, windowWeights
   );
   const predictionRecords = strategyRecords.map((record) => {
     const rankings = selectedStrategies.map((strategy, position) => record.candidateRankings[position][strategy]);
@@ -760,7 +767,7 @@ function kl8Numbers(draw) {
 
 function kl8Ranking(draws, end = draws.length) {
   const counts = Array(81).fill(0);
-  const weights = [30, 50, 100].map((window, index) => ({ window, weight: RECENT_WINDOW_WEIGHTS[index] }));
+  const weights = [30, 50, 100].map((window, index) => ({ window, weight: recentWindowWeights('kl8')[index] }));
   weights.forEach(({ window, weight }) => {
     const start = Math.max(0, end - window);
     for (let index = start; index < end; index++) kl8Numbers(draws[index]).forEach((number) => { counts[number] += weight / (end - start || 1); });
@@ -836,7 +843,7 @@ function renderKl8Overview(draws) {
   });
   $('#kl8-zone-code').textContent = zones.join(' ');
   $('#kl8-zone-note').textContent = `选十分布 · ${format(tenPlan.picks)}`;
-  $('#kl8-algorithm-summary').textContent = `近30/50/100期按45%/35%/20%评分，后${tenPlan.validationSize}期滚动验证`;
+  $('#kl8-algorithm-summary').textContent = `近30/50/100期按${recentWeightLabel('kl8')}评分，后${tenPlan.validationSize}期滚动验证`;
   $('#kl8-hit-rate').textContent = `选十平均命中：${tenPlan.averageHits.toFixed(2)}个 · 理论2.50个`;
   $('#kl8-coverage-rate').textContent = `号码覆盖率：${(tenPlan.validationPositionRate * 100).toFixed(1)}% · 理论12.5%`;
   saveKl8DailyRecommendation(draws, tenPlan, twelvePlan);
@@ -883,6 +890,24 @@ function mergeReviewEntries(serverEntries) {
     saveLocalReviewEntry(entry);
   });
   return [...merged.values()].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+function applyReviewAdaptation(lottery, adaptation) {
+  if (!adaptation?.weights?.length) return;
+  const previous = adaptiveWindowWeights[lottery] || [];
+  if (previous.join(',') !== adaptation.weights.join(',')) tuningVersion++;
+  adaptiveWindowWeights[lottery] = adaptation.weights;
+  adaptiveDirections[lottery] = adaptation.direction || '基础权重';
+}
+
+async function loadReviewAdaptation(lottery) {
+  try {
+    const response = await fetch(`/api/recommendations?lottery=${lottery}`);
+    const result = await response.json();
+    applyReviewAdaptation(lottery, result.adaptation);
+  } catch (_) {
+    // Recommendations remain on the base weights when review data is unavailable.
+  }
 }
 
 function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount, singleTickets = []) {
@@ -944,7 +969,7 @@ function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
   $('#daily-three-note').textContent = `整注命中 ${(narrowPlan.validationRate * 100).toFixed(1)}% · 分位覆盖 ${(narrowPlan.validationPositionRate * 100).toFixed(1)}% · 理论 ${(narrowPlan.baseline * 100).toFixed(1)}%`;
   $('#daily-six-meta').textContent = `命中${widePlan.validationHits}/${widePlan.validationSize}期 · ${wideBets * 2}元`;
   $('#daily-three-meta').textContent = `命中${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${narrowBets * 2}元`;
-  $('#algorithm-summary').textContent = `近30/50/100期表现按45%/35%/20%评分；近期信号权重${Math.round(narrowPlan.recentSignalWeight * 100)}%，后${narrowPlan.validationSize}期留出验证`;
+  $('#algorithm-summary').textContent = `近30/50/100期按${recentWeightLabel(lottery)}评分；${adaptiveDirections[lottery]}；近期信号权重${Math.round(narrowPlan.recentSignalWeight * 100)}%，后${narrowPlan.validationSize}期留出验证`;
   $('#algorithm-hit-rate').textContent = `整注命中率：${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${(narrowPlan.validationRate * 100).toFixed(1)}%`;
   $('#algorithm-position-rate').textContent = `分位覆盖率：${(narrowPlan.validationPositionRate * 100).toFixed(1)}% · 理论 ${((narrowCount / 10) * 100).toFixed(1)}%`;
   $('#algorithm-three-models').textContent = `${narrowCount}码：${names.map((name, position) => `${name.slice(0, 1)}${narrowPlan.modelNames[position]}`).join(' / ')}`;
@@ -1112,11 +1137,11 @@ function renderOverview() {
 
 async function loadOverviewData(refresh = false) {
   const missing = ['pl3', 'pl5', 'kl8'].filter((lottery) => refresh || !overviewData[lottery].length);
-  await Promise.all(missing.map(async (lottery) => {
+  await Promise.all([...missing.map(async (lottery) => {
     const response = await fetch(`/api/draws?lottery=${lottery}&limit=10000${refresh ? '&refresh=1' : ''}`);
     const result = await response.json();
     overviewData[lottery] = result.data;
-  }));
+  }), loadReviewAdaptation(state.lottery)]);
   renderOverview();
 }
 
@@ -1155,23 +1180,38 @@ function reviewDirection(entries) {
 }
 
 function renderReviewRows(entries) {
-  $('#review-summary').innerHTML = `<strong>${lotteryName()}复盘判断：</strong>${reviewDirection(entries)}`;
+  const weights = recentWindowWeights().map((weight) => `${Math.round(weight * 100)}%`).join('/');
+  $('#review-summary').innerHTML = `<strong>${lotteryName()}复盘判断：</strong>${reviewDirection(entries)} <b>下一期30/50/100期权重：${weights}。</b> ${adaptiveDirections[state.lottery]}`;
   $('#review-body').innerHTML = entries.length ? entries.map((entry) => {
     const recommendations = entry.recommendations || [];
     const outcomeByKey = new Map((entry.outcome?.results || []).map((result) => [result.key, result]));
+    const mark = (number, hit) => `<span class="review-number ${hit ? 'hit-number' : ''}">${number}</span>`;
     const ticket = recommendations.map((recommendation) => {
-      const code = recommendation.type === 'tickets' ? recommendation.tickets.join(' ') : recommendation.type === 'set' ? recommendation.picks.join(' ') : recommendation.picks.join('-');
+      const outcome = outcomeByKey.get(recommendation.key);
+      let code;
+      if (recommendation.type === 'set') {
+        const hits = new Set(outcome?.hitNumbers || []);
+        code = recommendation.picks.map((number) => mark(number, hits.has(number))).join(' ');
+      } else if (recommendation.type === 'tickets') {
+        const actual = entry.outcome?.actual || '';
+        code = recommendation.tickets.map((number) => [...number].map((digit, index) => mark(digit, digit === actual[index])).join('')).join(' ');
+      } else {
+        const actual = entry.outcome?.actual || '';
+        code = recommendation.picks.map((picks, position) => [...String(picks)].map((digit) => mark(digit, digit === actual[position])).join('')).join('<i class="review-separator">-</i>');
+      }
       return `<div class="review-ticket"><small>${recommendation.label}${recommendation.cost ? ` · ${recommendation.cost}元` : ''}</small>${code}</div>`;
     }).join('');
     const validation = recommendations.map((recommendation) => `<div><small>${recommendation.label}</small>${recommendation.type === 'set' ? `平均命中 ${recommendation.validationHitAverage.toFixed(2)}个 · 覆盖 ${(recommendation.validationPositionRate * 100).toFixed(1)}%` : `整注 ${(recommendation.validationRate * 100).toFixed(1)}% · 分位 ${(recommendation.validationPositionRate * 100).toFixed(1)}%`}</div>`).join('');
+    const actualDisplay = entry.lottery === 'kl8' ? (entry.outcome?.actual.match(/\d{2}/g) || []).join(' ') : [...(entry.outcome?.actual || '')].join(' ');
     const result = entry.status === 'settled'
-      ? `<div class="review-result"><strong>${entry.outcome.targetIssue}期 · ${entry.outcome.actual}</strong><small>${entry.outcome.targetDate}</small></div>`
+      ? `<div class="review-result"><strong>${entry.outcome.targetIssue}期 · ${actualDisplay}</strong><small>${entry.outcome.targetDate}</small></div>`
       : '<span class="review-status pending">待下一期开奖</span>';
     const verdict = entry.status === 'settled' ? recommendations.map((recommendation) => {
       const item = outcomeByKey.get(recommendation.key);
-      if (recommendation.type === 'set') return `<div class="review-status ${item.positionHitCount ? 'hit' : 'miss'}">${recommendation.label} 命中${item.positionHitCount}个<small>${item.hitNumbers.join(' ')}</small></div>`;
+      if (recommendation.type === 'set') return `<div class="review-status ${item.positionHitCount ? 'hit' : 'miss'}">${recommendation.label} ${item.positionHitCount}/${recommendation.picks.length}命中 · ${(item.positionHitCount / recommendation.picks.length * 100).toFixed(1)}%<small>开奖覆盖 ${item.positionHitCount}/20 · ${(item.positionHitCount / 20 * 100).toFixed(1)}%</small></div>`;
+      if (recommendation.type === 'tickets') return `<div class="review-status ${item.fullHit ? 'hit' : 'miss'}">${recommendation.label} ${item.ticketHitCount || 0}/${recommendation.tickets.length}整注命中<small>单票最高分位覆盖 ${item.positionHitCount}/${recommendation.positionCount} · ${(item.positionHitCount / recommendation.positionCount * 100).toFixed(1)}%</small></div>`;
       const status = item.fullHit ? 'hit' : 'miss';
-      return `<div class="review-status ${status}">${recommendation.label}${item.fullHit ? ' 命中' : ' 未中'}<small>分位覆盖 ${item.positionHitCount}/${recommendation.positionCount}</small></div>`;
+      return `<div class="review-status ${status}">${recommendation.label}${item.fullHit ? ' 整注命中' : ' 未中'}<small>分位命中 ${item.positionHitCount}/${recommendation.positionCount} · ${(item.positionHitCount / recommendation.positionCount * 100).toFixed(1)}%</small></div>`;
     }).join('') : '<span class="review-status pending">等待核对</span>';
     const label = entry.lottery === 'pl3' ? '排列三' : entry.lottery === 'kl8' ? '快乐8' : '排列五';
     return `<tr><td>${entry.date}</td><td>${label}</td><td>${entry.sourceIssue}期<br><small>${entry.sourceDate}</small></td><td>${ticket}</td><td>${validation}</td><td>${result}</td><td>${verdict}</td></tr>`;
@@ -1183,6 +1223,7 @@ async function renderReview() {
   try {
     const response = await fetch(`/api/recommendations?lottery=${state.lottery}`);
     const result = await response.json();
+    applyReviewAdaptation(state.lottery, result.adaptation);
     renderReviewRows(mergeReviewEntries(result.data || []).filter((entry) => entry.lottery === state.lottery));
   } catch (_) {
     const local = readLocalReviewHistory().filter((entry) => entry.lottery === state.lottery);
@@ -1560,6 +1601,7 @@ async function loadData(refresh = false) {
     const result = await response.json();
     state.draws = result.data;
     overviewData[state.lottery] = result.data;
+    await loadReviewAdaptation(state.lottery);
     $('#custom-period').max = state.draws.length;
     $('#custom-period').title = `可输入1至${state.draws.length}期`;
     const latest = state.draws[state.draws.length - 1];

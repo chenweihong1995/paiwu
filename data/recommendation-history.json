@@ -63,8 +63,38 @@
       }
     ],
     "id": "pl5-2026-07-21-2026191",
-    "status": "pending",
-    "outcome": null
+    "status": "settled",
+    "outcome": {
+      "targetIssue": 2026192,
+      "targetDate": "2026-07-21",
+      "actual": "30614",
+      "results": [
+        {
+          "key": "wide",
+          "fullHit": false,
+          "positionHits": [
+            true,
+            false,
+            false,
+            false,
+            false
+          ],
+          "positionHitCount": 1
+        },
+        {
+          "key": "narrow",
+          "fullHit": false,
+          "positionHits": [
+            true,
+            false,
+            false,
+            false,
+            false
+          ],
+          "positionHitCount": 1
+        }
+      ]
+    }
   },
   {
     "lottery": "pl3",
@@ -140,8 +170,41 @@
       }
     ],
     "id": "pl3-2026-07-21-2026191",
-    "status": "pending",
-    "outcome": null
+    "status": "settled",
+    "outcome": {
+      "targetIssue": 2026192,
+      "targetDate": "2026-07-21",
+      "actual": "306",
+      "results": [
+        {
+          "key": "wide",
+          "fullHit": false,
+          "positionHits": [
+            true,
+            false,
+            true
+          ],
+          "positionHitCount": 2
+        },
+        {
+          "key": "narrow",
+          "fullHit": false,
+          "positionHits": [
+            true,
+            false,
+            false
+          ],
+          "positionHitCount": 1
+        },
+        {
+          "key": "singles",
+          "fullHit": false,
+          "ticketHitCount": 0,
+          "positionHits": [],
+          "positionHitCount": 1
+        }
+      ]
+    }
   },
   {
     "id": "kl8-2026-07-21-2026191",
@@ -206,6 +269,103 @@
         "validationHitAverage": 2.8833333333333333
       }
     ],
+    "status": "settled",
+    "outcome": {
+      "targetIssue": 2026192,
+      "targetDate": "2026-07-21",
+      "actual": "0410121516181927283236464951546269707375",
+      "results": [
+        {
+          "key": "ten",
+          "fullHit": false,
+          "positionHits": [],
+          "positionHitCount": 4,
+          "hitNumbers": [
+            "12",
+            "27",
+            "69",
+            "73"
+          ]
+        },
+        {
+          "key": "twelve",
+          "fullHit": false,
+          "positionHits": [],
+          "positionHitCount": 4,
+          "hitNumbers": [
+            "12",
+            "27",
+            "69",
+            "73"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "lottery": "pl5",
+    "date": "2026-07-22",
+    "sourceIssue": "2026192",
+    "sourceDate": "2026-07-21",
+    "createdAt": "2026-07-22T05:43:53.136Z",
+    "modelVersion": "short-cycle-30-50-100-v1",
+    "recentWindows": [
+      30,
+      50,
+      100
+    ],
+    "recentSignalWeight": 0.6,
+    "recommendations": [
+      {
+        "key": "wide",
+        "label": "3码直选复式",
+        "picks": [
+          "013",
+          "259",
+          "457",
+          "467",
+          "136"
+        ],
+        "bets": 243,
+        "cost": 486,
+        "baseline": 0.0024299999999999994,
+        "validationRate": 0.005555555555555556,
+        "validationPositionRate": 0.30666666666666664,
+        "modelNames": [
+          "30/100期动量",
+          "位置转移",
+          "遗漏危险率",
+          "近50期指数衰减",
+          "前期形态转移"
+        ],
+        "positionCount": 5
+      },
+      {
+        "key": "narrow",
+        "label": "2码直选复式",
+        "picks": [
+          "03",
+          "25",
+          "57",
+          "47",
+          "13"
+        ],
+        "bets": 32,
+        "cost": 64,
+        "baseline": 0.0003200000000000001,
+        "validationRate": 0,
+        "validationPositionRate": 0.20444444444444443,
+        "modelNames": [
+          "30/100期动量",
+          "位置转移",
+          "遗漏危险率",
+          "近50期指数衰减",
+          "前期形态转移"
+        ],
+        "positionCount": 5
+      }
+    ],
+    "id": "pl5-2026-07-22-2026192",
     "status": "pending",
     "outcome": null
   }
