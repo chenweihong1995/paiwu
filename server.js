@@ -141,6 +141,12 @@ function settleRecommendationHistory(history, drawsByLottery) {
         const positionHitCount = tickets.reduce((best, ticket) => Math.max(best, [...ticket].filter((digit, index) => digit === actual[index]).length), 0);
         return { key: recommendation.key, fullHit: tickets.includes(actual), ticketHitCount: tickets.filter((ticket) => ticket === actual).length, positionHits: [], positionHitCount };
       }
+      if (recommendation.type === 'group6') {
+        const actualDigits = [...actual];
+        const hitNumbers = actualDigits.filter((digit) => recommendation.picks.includes(digit));
+        const fullHit = new Set(actualDigits).size === 3 && hitNumbers.length === 3;
+        return { key: recommendation.key, fullHit, positionHits: [], positionHitCount: hitNumbers.length, hitNumbers };
+      }
       const picks = recommendation.picks || [];
       const positionHits = picks.map((list, position) => String(list).includes(actual[position]));
       return {
@@ -164,7 +170,7 @@ function reviewAdaptation(history, lottery) {
   const settled = history.filter((entry) => entry.lottery === lottery && entry.status === 'settled');
   const observations = settled.flatMap((entry) => entry.recommendations.map((recommendation) => {
     const result = entry.outcome?.results?.find((item) => item.key === recommendation.key);
-    if (!result || recommendation.type === 'tickets') return null;
+    if (!result || ['tickets', 'group6'].includes(recommendation.type)) return null;
     const actual = result.positionHitCount / recommendation.positionCount;
     const expected = recommendation.type === 'set' ? recommendation.picks.length / 80
       : recommendation.picks.reduce((total, picks) => total + picks.length / 10, 0) / recommendation.positionCount;

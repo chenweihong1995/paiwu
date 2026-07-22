@@ -910,7 +910,7 @@ async function loadReviewAdaptation(lottery) {
   }
 }
 
-function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount, singleTickets = []) {
+function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount, singleTickets = [], groupTickets = {}) {
   const latest = draws[draws.length - 1];
   if (!latest) return;
   const key = `${lottery}-${beijingDate()}-${latest.issue}`;
@@ -929,7 +929,9 @@ function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount
     recommendations: [
       planSnapshot('wide', `${wideCount}码直选复式`, widePlan, positionCount),
       planSnapshot('narrow', `${narrowCount}码直选复式`, narrowPlan, positionCount),
-      ...(singleTickets.length ? [{ key: 'singles', label: `单式直选${singleTickets.length}注`, type: 'tickets', tickets: singleTickets, picks: [], cost: singleTickets.length * 2, positionCount, baseline: singleTickets.length / 1000, validationRate: 0, validationPositionRate: 0 }] : [])
+      ...(singleTickets.length ? [{ key: 'singles', label: `单式直选${singleTickets.length}注`, type: 'tickets', tickets: singleTickets, picks: [], cost: singleTickets.length * 2, positionCount, baseline: singleTickets.length / 1000, validationRate: 0, validationPositionRate: 0 }] : []),
+      ...(groupTickets.group3?.length ? [{ key: 'group3', label: '组三参考', type: 'tickets', tickets: groupTickets.group3, picks: [], cost: 4, positionCount: 3, baseline: 6 / 1000, validationRate: 0, validationPositionRate: 0 }] : []),
+      ...(groupTickets.group6?.length ? [{ key: 'group6', label: '组六6码复式', type: 'group6', picks: groupTickets.group6.map(String), cost: 40, positionCount: 3, baseline: 20 / 720, validationRate: 0, validationPositionRate: 0 }] : [])
     ]
   };
   snapshot.id = `${lottery}-${snapshot.date}-${snapshot.sourceIssue}`;
@@ -954,6 +956,7 @@ function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
   overviewRecommendations[lottery].wide = widePlan.picks;
   overviewRecommendations[lottery].narrow = narrowPlan.picks;
   const singleTickets = isPl3 ? pl3SingleTickets(narrowPlan) : [];
+  let groupTickets = {};
   overviewRecommendations[lottery].singles = singleTickets;
   const aggregate = Array.from({ length: 10 }, (_, digit) => ({
     digit,
@@ -981,6 +984,10 @@ function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
     const group3 = aggregate.slice(0, 2).map((item) => item.digit);
     const group6 = balancedTop(aggregate, 6);
     const [a, b] = group3;
+    groupTickets = {
+      group3: [`${a}${a}${b}`, `${a}${b}${a}`, `${b}${a}${a}`, `${a}${b}${b}`, `${b}${a}${b}`, `${b}${b}${a}`],
+      group6
+    };
     $('#daily-special-one-title').textContent = '组三参考';
     $('#daily-special-one-meta').textContent = '2组 · 4元';
     $('#daily-special-two-title').textContent = '组六6码复式';
@@ -1006,7 +1013,7 @@ function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
     $('#daily-group6').textContent = routeLine.join(' ');
     $('#daily-group6-detail').textContent = '万、千、百、十、个位依次对应的012路';
   }
-  saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount, singleTickets);
+  saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount, singleTickets, groupTickets);
 }
 
 function renderBacktestedRecommendation(count) {
@@ -1164,11 +1171,12 @@ function reviewDirection(entries) {
   if (!settled.length) return '尚未有已开奖的推荐，下一期开奖后会自动生成第一条复盘。';
   const observations = settled.flatMap((entry) => entry.recommendations.map((recommendation) => {
     const outcome = entry.outcome?.results?.find((result) => result.key === recommendation.key);
+    if (['tickets', 'group6'].includes(recommendation.type)) return null;
     const actualRate = outcome ? outcome.positionHitCount / recommendation.positionCount : 0;
     const expectedRate = recommendation.type === 'set' ? recommendation.picks.length / 80
       : recommendation.type === 'tickets' ? 0 : recommendation.picks.reduce((total, picks) => total + picks.length / 10, 0) / recommendation.positionCount;
     return { actualRate, expectedRate, fullHit: outcome?.fullHit };
-  }));
+  }).filter(Boolean));
   const actual = observations.reduce((total, item) => total + item.actualRate, 0) / observations.length;
   const expected = observations.reduce((total, item) => total + item.expectedRate, 0) / observations.length;
   const fullHits = observations.filter((item) => item.fullHit).length;
@@ -1195,13 +1203,16 @@ function renderReviewRows(entries) {
       } else if (recommendation.type === 'tickets') {
         const actual = entry.outcome?.actual || '';
         code = recommendation.tickets.map((number) => [...number].map((digit, index) => mark(digit, digit === actual[index])).join('')).join(' ');
+      } else if (recommendation.type === 'group6') {
+        const hits = new Set(outcome?.hitNumbers || []);
+        code = recommendation.picks.map((number) => mark(number, hits.has(number))).join(' ');
       } else {
         const actual = entry.outcome?.actual || '';
         code = recommendation.picks.map((picks, position) => [...String(picks)].map((digit) => mark(digit, digit === actual[position])).join('')).join('<i class="review-separator">-</i>');
       }
       return `<div class="review-ticket"><small>${recommendation.label}${recommendation.cost ? ` · ${recommendation.cost}元` : ''}</small>${code}</div>`;
     }).join('');
-    const validation = recommendations.map((recommendation) => `<div><small>${recommendation.label}</small>${recommendation.type === 'set' ? `平均命中 ${recommendation.validationHitAverage.toFixed(2)}个 · 覆盖 ${(recommendation.validationPositionRate * 100).toFixed(1)}%` : `整注 ${(recommendation.validationRate * 100).toFixed(1)}% · 分位 ${(recommendation.validationPositionRate * 100).toFixed(1)}%`}</div>`).join('');
+    const validation = recommendations.map((recommendation) => `<div><small>${recommendation.label}</small>${recommendation.type === 'set' ? `平均命中 ${recommendation.validationHitAverage.toFixed(2)}个 · 覆盖 ${(recommendation.validationPositionRate * 100).toFixed(1)}%` : recommendation.type === 'group6' ? '6码组选 · C(6,3)共20组' : recommendation.type === 'tickets' ? `直选覆盖${recommendation.tickets.length}注` : `整注 ${(recommendation.validationRate * 100).toFixed(1)}% · 分位 ${(recommendation.validationPositionRate * 100).toFixed(1)}%`}</div>`).join('');
     const actualDisplay = entry.lottery === 'kl8' ? (entry.outcome?.actual.match(/\d{2}/g) || []).join(' ') : [...(entry.outcome?.actual || '')].join(' ');
     const result = entry.status === 'settled'
       ? `<div class="review-result"><strong>${entry.outcome.targetIssue}期 · ${actualDisplay}</strong><small>${entry.outcome.targetDate}</small></div>`
@@ -1210,6 +1221,7 @@ function renderReviewRows(entries) {
       const item = outcomeByKey.get(recommendation.key);
       if (recommendation.type === 'set') return `<div class="review-status ${item.positionHitCount ? 'hit' : 'miss'}">${recommendation.label} ${item.positionHitCount}/${recommendation.picks.length}命中 · ${(item.positionHitCount / recommendation.picks.length * 100).toFixed(1)}%<small>开奖覆盖 ${item.positionHitCount}/20 · ${(item.positionHitCount / 20 * 100).toFixed(1)}%</small></div>`;
       if (recommendation.type === 'tickets') return `<div class="review-status ${item.fullHit ? 'hit' : 'miss'}">${recommendation.label} ${item.ticketHitCount || 0}/${recommendation.tickets.length}整注命中<small>单票最高分位覆盖 ${item.positionHitCount}/${recommendation.positionCount} · ${(item.positionHitCount / recommendation.positionCount * 100).toFixed(1)}%</small></div>`;
+      if (recommendation.type === 'group6') return `<div class="review-status ${item.fullHit ? 'hit' : 'miss'}">组六 ${item.fullHit ? '组选命中' : '未中'}<small>六码命中 ${item.positionHitCount}/6 · ${(item.positionHitCount / 6 * 100).toFixed(1)}%</small></div>`;
       const status = item.fullHit ? 'hit' : 'miss';
       return `<div class="review-status ${status}">${recommendation.label}${item.fullHit ? ' 整注命中' : ' 未中'}<small>分位命中 ${item.positionHitCount}/${recommendation.positionCount} · ${(item.positionHitCount / recommendation.positionCount * 100).toFixed(1)}%</small></div>`;
     }).join('') : '<span class="review-status pending">等待核对</span>';
