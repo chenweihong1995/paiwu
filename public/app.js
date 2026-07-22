@@ -1190,44 +1190,40 @@ function reviewDirection(entries) {
 function renderReviewRows(entries) {
   const weights = recentWindowWeights().map((weight) => `${Math.round(weight * 100)}%`).join('/');
   $('#review-summary').innerHTML = `<strong>${lotteryName()}复盘判断：</strong>${reviewDirection(entries)} <b>下一期30/50/100期权重：${weights}。</b> ${adaptiveDirections[state.lottery]}`;
-  $('#review-body').innerHTML = entries.length ? entries.map((entry) => {
+  const mark = (number, hit) => `<span class="review-number ${hit ? 'hit-number' : ''}">${number}</span>`;
+  const labelOf = (lottery) => lottery === 'pl3' ? '排列三' : lottery === 'kl8' ? '快乐8' : '排列五';
+  const rows = entries.flatMap((entry) => {
     const recommendations = entry.recommendations || [];
     const outcomeByKey = new Map((entry.outcome?.results || []).map((result) => [result.key, result]));
-    const mark = (number, hit) => `<span class="review-number ${hit ? 'hit-number' : ''}">${number}</span>`;
-    const ticket = recommendations.map((recommendation) => {
+    const actual = entry.outcome?.actual || '';
+    const actualDisplay = entry.lottery === 'kl8' ? (actual.match(/\d{2}/g) || []).join(' ') : [...actual].join(' ');
+    const actualCell = entry.status === 'settled' ? `<div class="review-result"><strong>${entry.outcome.targetIssue}期</strong><b>${actualDisplay}</b><small>${entry.outcome.targetDate}</small></div>` : '<span class="review-status pending">待下一期开奖</span>';
+    return recommendations.map((recommendation, index) => {
       const outcome = outcomeByKey.get(recommendation.key);
-      let code;
+      let code = '';
       if (recommendation.type === 'set') {
-        const hits = new Set(outcome?.hitNumbers || []);
-        code = recommendation.picks.map((number) => mark(number, hits.has(number))).join(' ');
+        const hits = new Set(outcome?.hitNumbers || []); code = recommendation.picks.map((number) => mark(number, hits.has(number))).join(' ');
       } else if (recommendation.type === 'tickets') {
-        const actual = entry.outcome?.actual || '';
-        code = recommendation.tickets.map((number) => [...number].map((digit, index) => mark(digit, digit === actual[index])).join('')).join(' ');
+        code = recommendation.tickets.map((number) => [...number].map((digit, position) => mark(digit, digit === actual[position])).join('')).join(' ');
       } else if (recommendation.type === 'group6') {
-        const hits = new Set(outcome?.hitNumbers || []);
-        code = recommendation.picks.map((number) => mark(number, hits.has(number))).join(' ');
+        const hits = new Set(outcome?.hitNumbers || []); code = recommendation.picks.map((number) => mark(number, hits.has(number))).join(' ');
       } else {
-        const actual = entry.outcome?.actual || '';
         code = recommendation.picks.map((picks, position) => [...String(picks)].map((digit) => mark(digit, digit === actual[position])).join('')).join('<i class="review-separator">-</i>');
       }
-      return `<div class="review-ticket"><small>${recommendation.label}${recommendation.cost ? ` · ${recommendation.cost}元` : ''}</small>${code}</div>`;
-    }).join('');
-    const validation = recommendations.map((recommendation) => `<div><small>${recommendation.label}</small>${recommendation.type === 'set' ? `平均命中 ${recommendation.validationHitAverage.toFixed(2)}个 · 覆盖 ${(recommendation.validationPositionRate * 100).toFixed(1)}%` : recommendation.type === 'group6' ? '6码组选 · C(6,3)共20组' : recommendation.type === 'tickets' ? `直选覆盖${recommendation.tickets.length}注` : `整注 ${(recommendation.validationRate * 100).toFixed(1)}% · 分位 ${(recommendation.validationPositionRate * 100).toFixed(1)}%`}</div>`).join('');
-    const actualDisplay = entry.lottery === 'kl8' ? (entry.outcome?.actual.match(/\d{2}/g) || []).join(' ') : [...(entry.outcome?.actual || '')].join(' ');
-    const result = entry.status === 'settled'
-      ? `<div class="review-result"><strong>${entry.outcome.targetIssue}期 · ${actualDisplay}</strong><small>${entry.outcome.targetDate}</small></div>`
-      : '<span class="review-status pending">待下一期开奖</span>';
-    const verdict = entry.status === 'settled' ? recommendations.map((recommendation) => {
-      const item = outcomeByKey.get(recommendation.key);
-      if (recommendation.type === 'set') return `<div class="review-status ${item.positionHitCount ? 'hit' : 'miss'}">${recommendation.label} ${item.positionHitCount}/${recommendation.picks.length}命中 · ${(item.positionHitCount / recommendation.picks.length * 100).toFixed(1)}%<small>开奖覆盖 ${item.positionHitCount}/20 · ${(item.positionHitCount / 20 * 100).toFixed(1)}%</small></div>`;
-      if (recommendation.type === 'tickets') return `<div class="review-status ${item.fullHit ? 'hit' : 'miss'}">${recommendation.label} ${item.ticketHitCount || 0}/${recommendation.tickets.length}整注命中<small>单票最高分位覆盖 ${item.positionHitCount}/${recommendation.positionCount} · ${(item.positionHitCount / recommendation.positionCount * 100).toFixed(1)}%</small></div>`;
-      if (recommendation.type === 'group6') return `<div class="review-status ${item.fullHit ? 'hit' : 'miss'}">组六 ${item.fullHit ? '组选命中' : '未中'}<small>六码命中 ${item.positionHitCount}/6 · ${(item.positionHitCount / 6 * 100).toFixed(1)}%</small></div>`;
-      const status = item.fullHit ? 'hit' : 'miss';
-      return `<div class="review-status ${status}">${recommendation.label}${item.fullHit ? ' 整注命中' : ' 未中'}<small>分位命中 ${item.positionHitCount}/${recommendation.positionCount} · ${(item.positionHitCount / recommendation.positionCount * 100).toFixed(1)}%</small></div>`;
-    }).join('') : '<span class="review-status pending">等待核对</span>';
-    const label = entry.lottery === 'pl3' ? '排列三' : entry.lottery === 'kl8' ? '快乐8' : '排列五';
-    return `<tr><td>${entry.date}</td><td>${label}</td><td>${entry.sourceIssue}期<br><small>${entry.sourceDate}</small></td><td>${ticket}</td><td>${validation}</td><td>${result}</td><td>${verdict}</td></tr>`;
-  }).join('') : '<tr><td colspan="7">暂无保存的推荐。打开研判主板后，今日排三和排五方案会自动归档。</td></tr>';
+      const validation = recommendation.type === 'set' ? `平均${recommendation.validationHitAverage.toFixed(2)}个 · 覆盖 ${(recommendation.validationPositionRate * 100).toFixed(1)}%` : recommendation.type === 'group6' ? '6码组选 · 20组' : recommendation.type === 'tickets' ? `覆盖${recommendation.tickets.length}注` : `整注 ${(recommendation.validationRate * 100).toFixed(1)}% · 分位 ${(recommendation.validationPositionRate * 100).toFixed(1)}%`;
+      let verdict = '<span class="review-status pending">等待核对</span>';
+      if (entry.status === 'settled') {
+        if (recommendation.type === 'set') verdict = `<div class="review-status ${outcome.positionHitCount ? 'hit' : 'miss'}">${outcome.positionHitCount}/${recommendation.picks.length}命中 · ${(outcome.positionHitCount / recommendation.picks.length * 100).toFixed(1)}%<small>开奖覆盖 ${outcome.positionHitCount}/20 · ${(outcome.positionHitCount / 20 * 100).toFixed(1)}%</small></div>`;
+        else if (recommendation.type === 'tickets') verdict = `<div class="review-status ${outcome.fullHit ? 'hit' : 'miss'}">${outcome.ticketHitCount || 0}/${recommendation.tickets.length}整注命中<small>最高分位 ${outcome.positionHitCount}/${recommendation.positionCount} · ${(outcome.positionHitCount / recommendation.positionCount * 100).toFixed(1)}%</small></div>`;
+        else if (recommendation.type === 'group6') verdict = `<div class="review-status ${outcome.fullHit ? 'hit' : 'miss'}">${outcome.fullHit ? '组选命中' : '未中'}<small>六码命中 ${outcome.positionHitCount}/6 · ${(outcome.positionHitCount / 6 * 100).toFixed(1)}%</small></div>`;
+        else verdict = `<div class="review-status ${outcome.fullHit ? 'hit' : 'miss'}">${outcome.fullHit ? '整注命中' : '未中'}<small>分位命中 ${outcome.positionHitCount}/${recommendation.positionCount} · ${(outcome.positionHitCount / recommendation.positionCount * 100).toFixed(1)}%</small></div>`;
+      }
+      const shared = index === 0 ? `<td rowspan="${recommendations.length}">${entry.date}</td><td rowspan="${recommendations.length}">${labelOf(entry.lottery)}</td><td rowspan="${recommendations.length}">${entry.sourceIssue}期<br><small>${entry.sourceDate}</small></td>` : '';
+      const resultShared = index === 0 ? `<td rowspan="${recommendations.length}">${actualCell}</td>` : '';
+      return `<tr class="review-play-row">${shared}<td class="review-play"><strong>${recommendation.label}</strong><small>${recommendation.cost ? `${recommendation.cost}元` : '统计参考'}</small></td><td class="review-code">${code}</td><td class="review-validation">${validation}</td>${resultShared}<td>${verdict}</td></tr>`;
+    });
+  });
+  $('#review-body').innerHTML = rows.length ? rows.join('') : '<tr><td colspan="8">暂无保存的推荐。打开研判主板后，今日方案会自动归档。</td></tr>';
 }
 
 async function renderReview() {

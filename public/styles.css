@@ -173,12 +173,18 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .review-summary { margin: 14px 22px; padding: 12px 14px; border-left: 3px solid var(--teal); background: #eef6f5; color: #40515c; font-size: 12px; }
 .review-summary strong { color: #21313b; }
 .review-table-wrap { height: calc(100vh - 330px); }
-.review-ticket { min-width: 210px; color: #263741; font-weight: 700; letter-spacing: 1px; line-height: 1.7; }
-.review-ticket small, .review-result small { display: block; color: var(--muted); font-weight: 400; letter-spacing: 0; }
+.review-play-row td { vertical-align: middle; }
+.review-play { min-width: 104px; background: #fbfcfc; }
+.review-play strong, .review-play small, .review-result small { display: block; }
+.review-play small, .review-result small { margin-top: 2px; color: var(--muted); font-size: 10px; }
+.review-code { min-width: 220px; color: #263741; font-weight: 700; letter-spacing: 1px; line-height: 1.9; white-space: nowrap; }
+.review-validation { min-width: 160px; color: #53616b; font-size: 11px; line-height: 1.5; }
 .review-number { display: inline-grid; min-width: 18px; place-items: center; color: #43515c; }
 .review-number.hit-number { color: #fff; background: var(--red); border-radius: 50%; font-weight: 800; }
 .review-separator { display: inline-block; padding: 0 3px; color: #a0aab1; font-style: normal; }
-.review-result { min-width: 130px; }
+.review-result { min-width: 125px; }
+.review-result strong, .review-result b { display: block; }
+.review-result b { margin: 4px 0; color: #263741; letter-spacing: 2px; white-space: nowrap; }
 .review-status { font-weight: 700; }
 .review-status.pending { color: var(--gold); }
 .review-status.hit { color: var(--teal); }
