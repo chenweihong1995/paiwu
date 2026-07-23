@@ -123,6 +123,10 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .motif-digit.marked { fill: #fff; }
 .motif-hit { stroke: #fff; stroke-width: 2; }
 .motif-line { fill: none; stroke-width: 2.5; stroke-linecap: round; opacity: .82; }
+.motif-projection { fill: none; stroke-width: 2; stroke-linecap: round; stroke-dasharray: 4 3; opacity: .48; }
+.motif-hit.forecast { opacity: .42; stroke-dasharray: 3 2; }
+.motif-digit.forecast, .motif-issue.forecast { opacity: .58; }
+.motif-cell.forecast, .motif-label-cell.forecast { fill: #f5f7f8; stroke-dasharray: 3 2; }
 .motif-hit.pair, .motif-line.pair { fill: #a900bf; stroke: #a900bf; }
 .motif-hit.carry, .motif-line.carry { fill: #1986a1; stroke: #1986a1; }
 .motif-hit.stair, .motif-line.stair { fill: #cc6d12; stroke: #cc6d12; }

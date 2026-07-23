@@ -1060,6 +1060,49 @@ function pl5WideFocus(draws) {
   return [...pl5Distribution, ...pl5Positions];
 }
 
+function mergePairShiftChains(candidates, positionCount, drawCount) {
+  const sorted = candidates.slice().sort((a, b) => a.row - b.row || a.start - b.start);
+  return sorted.filter((candidate) => !sorted.some((previous) => previous.row === candidate.row - 1
+    && previous.pair === candidate.pair && previous.direction === candidate.direction && previous.target === candidate.start)).map((candidate) => {
+    const chain = [candidate];
+    let tail = candidate;
+    while (true) {
+      const next = sorted.find((item) => item.row === tail.row + 1 && item.pair === tail.pair
+        && item.direction === tail.direction && item.start === tail.target);
+      if (!next) break;
+      chain.push(next);
+      tail = next;
+    }
+    const nextStart = tail.target + tail.direction;
+    const canProject = chain.length >= 2 && tail.row + 2 === drawCount && nextStart >= 0 && nextStart < positionCount - 1;
+    const forecast = canProject ? {
+      row: tail.row + 2,
+      start: nextStart,
+      pair: tail.pair,
+      lines: [[[tail.row + 1, tail.target], [tail.row + 2, nextStart]], [[tail.row + 1, tail.target + 1], [tail.row + 2, nextStart + 1]]]
+    } : null;
+    return {
+      row: candidate.row,
+      points: [...new Map(chain.flatMap((item) => item.points).map((point) => [point.join('-'), point])).values()],
+      lines: chain.flatMap((item) => item.lines),
+      forecast,
+      chainLength: chain.length,
+      detail: chain.length > 1 ? `${candidate.pair}连续${chain.length + 1}组，${candidate.direction > 0 ? '右' : '左'}移${chain.length}次` : `${candidate.pair}${candidate.direction > 0 ? '右移' : '左移'}`
+    };
+  });
+}
+
+function motifDetail(motif, names) {
+  if (!motif?.forecast) return motif?.detail || '';
+  const { start, pair } = motif.forecast;
+  return `${motif.detail}；若仅按图形延长：下期${names[start]}${names[start + 1]}位为${pair}`;
+}
+
+function selectMotif(found, type) {
+  if (type !== 'pair') return found[type].at(-1);
+  return found.pair.slice().sort((a, b) => b.chainLength - a.chainLength || b.row - a.row)[0];
+}
+
 function pl3MotifCandidates(draws) {
   const found = { pair: [], carry: [], stair: [], neighbor: [] };
   const first = Math.max(0, draws.length - 30);
@@ -1069,7 +1112,7 @@ function pl3MotifCandidates(draws) {
     for (let position = 0; position < 2; position += 1) {
       const pair = current.slice(position, position + 2).join('');
       const target = position === 0 ? 1 : 0;
-      if (next.slice(target, target + 2).join('') === pair) found.pair.push({ row, points: [[row, position], [row, position + 1], [row + 1, target], [row + 1, target + 1]], lines: [[[row, position], [row, position + 1]], [[row + 1, target], [row + 1, target + 1]], [[row, position], [row + 1, target]], [[row, position + 1], [row + 1, target + 1]]], detail: `${pair}${target > position ? '右移' : '左移'}` });
+      if (next.slice(target, target + 2).join('') === pair) found.pair.push({ row, pair, start: position, target, direction: target > position ? 1 : -1, points: [[row, position], [row, position + 1], [row + 1, target], [row + 1, target + 1]], lines: [[[row, position], [row, position + 1]], [[row + 1, target], [row + 1, target + 1]], [[row, position], [row + 1, target]], [[row, position + 1], [row + 1, target + 1]]] });
     }
     for (let position = 0; position < 3; position += 1) {
       [-1, 1].forEach((step) => {
@@ -1079,6 +1122,7 @@ function pl3MotifCandidates(draws) {
       });
     }
   }
+  found.pair = mergePairShiftChains(found.pair, 3, draws.length);
   for (let row = first; row < draws.length - 2; row += 1) {
     for (let position = 0; position < 3; position += 1) {
       const values = [drawDigits(draws[row], 3)[position], drawDigits(draws[row + 1], 3)[position], drawDigits(draws[row + 2], 3)[position]];
@@ -1093,19 +1137,21 @@ function pl3MotifChart(draws, motif, type) {
   if (!motif) return '<div class="motif-empty">近30期未检出该类连续轨迹</div>';
   const start = Math.max(0, Math.min(motif.row - 1, draws.length - 4));
   const slice = draws.slice(start, start + 4);
+  const rows = motif.forecast?.row === draws.length ? [...slice, null] : slice;
   const rowHeight = 31;
   const labelWidth = 45;
   const cellWidth = 46;
   const headerHeight = 22;
   const width = labelWidth + cellWidth * 3;
-  const height = headerHeight + rowHeight * slice.length;
+  const height = headerHeight + rowHeight * rows.length;
   const center = (row, position) => [labelWidth + cellWidth * position + cellWidth / 2, headerHeight + rowHeight * row + rowHeight / 2];
   const points = new Set(motif.points.map(([row, position]) => `${row - start}-${position}`));
-  const grid = slice.map((draw, row) => `<rect class="motif-label-cell" x="0" y="${headerHeight + row * rowHeight}" width="${labelWidth}" height="${rowHeight}" />${[0, 1, 2].map((position) => `<rect class="motif-cell" x="${labelWidth + position * cellWidth}" y="${headerHeight + row * rowHeight}" width="${cellWidth}" height="${rowHeight}" />`).join('')}`).join('');
+  const grid = rows.map((draw, row) => `<rect class="motif-label-cell${draw ? '' : ' forecast'}" x="0" y="${headerHeight + row * rowHeight}" width="${labelWidth}" height="${rowHeight}" />${[0, 1, 2].map((position) => `<rect class="motif-cell${draw ? '' : ' forecast'}" x="${labelWidth + position * cellWidth}" y="${headerHeight + row * rowHeight}" width="${cellWidth}" height="${rowHeight}" />`).join('')}`).join('');
   const lines = motif.lines.map(([from, to]) => { const a = center(from[0] - start, from[1]); const b = center(to[0] - start, to[1]); return `<line class="motif-line ${type}" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" />`; }).join('');
-  const labels = slice.map((draw, row) => `<text class="motif-issue" x="${labelWidth / 2}" y="${headerHeight + row * rowHeight + 19}">${String(draw.issue || '').slice(-3)}</text>`).join('');
-  const values = slice.map((draw, row) => drawDigits(draw, 3).map((digit, position) => { const hit = points.has(`${row}-${position}`); const [x, y] = center(row, position); return `${hit ? `<circle class="motif-hit ${type}" cx="${x}" cy="${y}" r="12" />` : ''}<text class="motif-digit${hit ? ' marked' : ''}" x="${x}" y="${y + 5}">${digit}</text>`; }).join('')).join('');
-  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${motif.detail}走势"><rect class="motif-head" x="0" y="0" width="${width}" height="${headerHeight}" /><text class="motif-header" x="${labelWidth / 2}" y="15">期</text><text class="motif-header" x="${labelWidth + cellWidth / 2}" y="15">百</text><text class="motif-header" x="${labelWidth + cellWidth * 1.5}" y="15">十</text><text class="motif-header" x="${labelWidth + cellWidth * 2.5}" y="15">个</text>${grid}${lines}${labels}${values}</svg>`;
+  const forecastLines = (motif.forecast?.lines || []).map(([from, to]) => { const a = center(from[0] - start, from[1]); const b = center(to[0] - start, to[1]); return `<line class="motif-projection ${type}" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" />`; }).join('');
+  const labels = rows.map((draw, row) => `<text class="motif-issue${draw ? '' : ' forecast'}" x="${labelWidth / 2}" y="${headerHeight + row * rowHeight + 19}">${draw ? String(draw.issue || '').slice(-3) : '下期'}</text>`).join('');
+  const values = rows.map((draw, row) => draw ? drawDigits(draw, 3).map((digit, position) => { const hit = points.has(`${row}-${position}`); const [x, y] = center(row, position); return `${hit ? `<circle class="motif-hit ${type}" cx="${x}" cy="${y}" r="12" />` : ''}<text class="motif-digit${hit ? ' marked' : ''}" x="${x}" y="${y + 5}">${digit}</text>`; }).join('') : motif.forecast ? [0, 1].map((offset) => { const position = motif.forecast.start + offset; const [x, y] = center(row, position); return `<circle class="motif-hit ${type} forecast" cx="${x}" cy="${y}" r="12" /><text class="motif-digit marked forecast" x="${x}" y="${y + 5}">${motif.forecast.pair[offset]}</text>`; }).join('') : '').join('');
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${motif.detail}走势"><rect class="motif-head" x="0" y="0" width="${width}" height="${headerHeight}" /><text class="motif-header" x="${labelWidth / 2}" y="15">期</text><text class="motif-header" x="${labelWidth + cellWidth / 2}" y="15">百</text><text class="motif-header" x="${labelWidth + cellWidth * 1.5}" y="15">十</text><text class="motif-header" x="${labelWidth + cellWidth * 2.5}" y="15">个</text>${grid}${lines}${forecastLines}${labels}${values}</svg>`;
 }
 
 function pl3MotifBoardMarkup(draws) {
@@ -1116,9 +1162,9 @@ function pl3MotifBoardMarkup(draws) {
     ['stair', '定位斜升/斜降', '同一位置连续两次加1或减1'],
     ['neighbor', '跨位邻号接力', '相邻位置之间出现相差1的接力']
   ].map(([type, title, rule]) => {
-    const motif = found[type].at(-1);
+    const motif = selectMotif(found, type);
     const issue = motif ? `${String(draws[motif.row].issue || '')}期` : '近30期';
-    return `<article class="motif-card"><header><strong>${title}</strong><span>${issue}</span></header>${pl3MotifChart(draws, motif, type)}<p>${motif ? motif.detail : rule}</p></article>`;
+    return `<article class="motif-card"><header><strong>${title}</strong><span>${issue}</span></header>${pl3MotifChart(draws, motif, type)}<p>${motif ? motifDetail(motif, ['百', '十', '个']) : rule}</p></article>`;
   }).join('');
   return `<div class="pl3-motif-board">${cards}</div><div class="motif-footnote">自动从近30期筛选连续图形；图形只描述已发生的号码路径，不推导下一期结果。</div>`;
 }
@@ -1134,7 +1180,7 @@ function pl5MotifCandidates(draws) {
       [-1, 1].forEach((step) => {
         const target = position + step;
         const pair = current.slice(position, position + 2).join('');
-        if (target >= 0 && target < 4 && next.slice(target, target + 2).join('') === pair) found.pair.push({ row, points: [[row, position], [row, position + 1], [row + 1, target], [row + 1, target + 1]], lines: [[[row, position], [row, position + 1]], [[row + 1, target], [row + 1, target + 1]], [[row, position], [row + 1, target]], [[row, position + 1], [row + 1, target + 1]]], detail: `${pair}${step > 0 ? '右移' : '左移'}` });
+        if (target >= 0 && target < 4 && next.slice(target, target + 2).join('') === pair) found.pair.push({ row, pair, start: position, target, direction: step, points: [[row, position], [row, position + 1], [row + 1, target], [row + 1, target + 1]], lines: [[[row, position], [row, position + 1]], [[row + 1, target], [row + 1, target + 1]], [[row, position], [row + 1, target]], [[row, position + 1], [row + 1, target + 1]]] });
       });
     }
     for (let position = 0; position < 5; position += 1) {
@@ -1145,6 +1191,7 @@ function pl5MotifCandidates(draws) {
       });
     }
   }
+  found.pair = mergePairShiftChains(found.pair, 5, draws.length);
   for (let row = first; row < draws.length - 2; row += 1) {
     for (let position = 0; position < 5; position += 1) {
       const values = [drawDigits(draws[row], 5)[position], drawDigits(draws[row + 1], 5)[position], drawDigits(draws[row + 2], 5)[position]];
@@ -1159,20 +1206,22 @@ function pl5MotifChart(draws, motif, type) {
   if (!motif) return '<div class="motif-empty">近30期未检出该类连续轨迹</div>';
   const start = Math.max(0, Math.min(motif.row - 1, draws.length - 4));
   const slice = draws.slice(start, start + 4);
+  const rows = motif.forecast?.row === draws.length ? [...slice, null] : slice;
   const rowHeight = 31;
   const labelWidth = 38;
   const cellWidth = 39;
   const headerHeight = 22;
   const width = labelWidth + cellWidth * 5;
-  const height = headerHeight + rowHeight * slice.length;
+  const height = headerHeight + rowHeight * rows.length;
   const names = ['万', '千', '百', '十', '个'];
   const center = (row, position) => [labelWidth + cellWidth * position + cellWidth / 2, headerHeight + rowHeight * row + rowHeight / 2];
   const points = new Set(motif.points.map(([row, position]) => `${row - start}-${position}`));
-  const grid = slice.map((draw, row) => `<rect class="motif-label-cell" x="0" y="${headerHeight + row * rowHeight}" width="${labelWidth}" height="${rowHeight}" />${names.map((name, position) => `<rect class="motif-cell" x="${labelWidth + position * cellWidth}" y="${headerHeight + row * rowHeight}" width="${cellWidth}" height="${rowHeight}" />`).join('')}`).join('');
+  const grid = rows.map((draw, row) => `<rect class="motif-label-cell${draw ? '' : ' forecast'}" x="0" y="${headerHeight + row * rowHeight}" width="${labelWidth}" height="${rowHeight}" />${names.map((name, position) => `<rect class="motif-cell${draw ? '' : ' forecast'}" x="${labelWidth + position * cellWidth}" y="${headerHeight + row * rowHeight}" width="${cellWidth}" height="${rowHeight}" />`).join('')}`).join('');
   const lines = motif.lines.map(([from, to]) => { const a = center(from[0] - start, from[1]); const b = center(to[0] - start, to[1]); return `<line class="motif-line ${type}" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" />`; }).join('');
-  const labels = slice.map((draw, row) => `<text class="motif-issue" x="${labelWidth / 2}" y="${headerHeight + row * rowHeight + 19}">${String(draw.issue || '').slice(-3)}</text>`).join('');
-  const values = slice.map((draw, row) => drawDigits(draw, 5).map((digit, position) => { const hit = points.has(`${row}-${position}`); const [x, y] = center(row, position); return `${hit ? `<circle class="motif-hit ${type}" cx="${x}" cy="${y}" r="11" />` : ''}<text class="motif-digit${hit ? ' marked' : ''}" x="${x}" y="${y + 5}">${digit}</text>`; }).join('')).join('');
-  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${motif.detail}走势"><rect class="motif-head" x="0" y="0" width="${width}" height="${headerHeight}" /><text class="motif-header" x="${labelWidth / 2}" y="15">期</text>${names.map((name, position) => `<text class="motif-header" x="${labelWidth + cellWidth * position + cellWidth / 2}" y="15">${name}</text>`).join('')}${grid}${lines}${labels}${values}</svg>`;
+  const forecastLines = (motif.forecast?.lines || []).map(([from, to]) => { const a = center(from[0] - start, from[1]); const b = center(to[0] - start, to[1]); return `<line class="motif-projection ${type}" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" />`; }).join('');
+  const labels = rows.map((draw, row) => `<text class="motif-issue${draw ? '' : ' forecast'}" x="${labelWidth / 2}" y="${headerHeight + row * rowHeight + 19}">${draw ? String(draw.issue || '').slice(-3) : '下期'}</text>`).join('');
+  const values = rows.map((draw, row) => draw ? drawDigits(draw, 5).map((digit, position) => { const hit = points.has(`${row}-${position}`); const [x, y] = center(row, position); return `${hit ? `<circle class="motif-hit ${type}" cx="${x}" cy="${y}" r="11" />` : ''}<text class="motif-digit${hit ? ' marked' : ''}" x="${x}" y="${y + 5}">${digit}</text>`; }).join('') : motif.forecast ? [0, 1].map((offset) => { const position = motif.forecast.start + offset; const [x, y] = center(row, position); return `<circle class="motif-hit ${type} forecast" cx="${x}" cy="${y}" r="11" /><text class="motif-digit marked forecast" x="${x}" y="${y + 5}">${motif.forecast.pair[offset]}</text>`; }).join('') : '').join('');
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${motif.detail}走势"><rect class="motif-head" x="0" y="0" width="${width}" height="${headerHeight}" /><text class="motif-header" x="${labelWidth / 2}" y="15">期</text>${names.map((name, position) => `<text class="motif-header" x="${labelWidth + cellWidth * position + cellWidth / 2}" y="15">${name}</text>`).join('')}${grid}${lines}${forecastLines}${labels}${values}</svg>`;
 }
 
 function pl5MotifBoardMarkup(draws) {
@@ -1183,9 +1232,9 @@ function pl5MotifBoardMarkup(draws) {
     ['stair', '定位斜升/斜降', '同一位置连续两次加1或减1'],
     ['neighbor', '跨位邻号接力', '相邻位置之间出现相差1的接力']
   ].map(([type, title, rule]) => {
-    const motif = found[type].at(-1);
+    const motif = selectMotif(found, type);
     const issue = motif ? `${String(draws[motif.row].issue || '')}期` : '近30期';
-    return `<article class="motif-card"><header><strong>${title}</strong><span>${issue}</span></header>${pl5MotifChart(draws, motif, type)}<p>${motif ? motif.detail : rule}</p></article>`;
+    return `<article class="motif-card"><header><strong>${title}</strong><span>${issue}</span></header>${pl5MotifChart(draws, motif, type)}<p>${motif ? motifDetail(motif, ['万', '千', '百', '十', '个']) : rule}</p></article>`;
   }).join('');
   return `<div class="pl3-motif-board">${cards}</div><div class="motif-footnote">自动从近30期筛选连续图形；图形只描述已发生的号码路径，不推导下一期结果。</div>`;
 }
@@ -1776,10 +1825,14 @@ function applyCustomPeriod() {
 async function loadData(refresh = false) {
   $('#refresh-button').disabled = true;
   try {
-    const response = await fetch(`/api/draws?lottery=${state.lottery}&limit=10000${refresh ? '&refresh=1' : ''}`);
-    const result = await response.json();
-    state.draws = result.data;
-    overviewData[state.lottery] = result.data;
+    const cachedDraws = !refresh ? overviewData[state.lottery] : [];
+    if (cachedDraws.length) state.draws = cachedDraws;
+    else {
+      const response = await fetch(`/api/draws?lottery=${state.lottery}&limit=10000${refresh ? '&refresh=1' : ''}`);
+      const result = await response.json();
+      state.draws = result.data;
+      overviewData[state.lottery] = result.data;
+    }
     await loadReviewAdaptation(state.lottery);
     $('#custom-period').max = state.draws.length;
     $('#custom-period').title = `可输入1至${state.draws.length}期`;
