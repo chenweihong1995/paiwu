@@ -107,26 +107,29 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .focus-observation:last-child { border-bottom: 0; }
 .focus-observation b { display: block; color: #34434e; font-size: 12px; }
 .focus-observation span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; letter-spacing: 0; overflow-wrap: anywhere; }
-.focus-list.line-observation { padding: 0; }
-.pl3-line-chart { overflow-x: auto; background: #fff; }
-.pl3-line-chart svg { display: block; min-width: 538px; width: 100%; height: auto; font-family: inherit; }
-.plot-head { fill: #f4f7f8; }
-.plot-cell, .plot-issue-cell { fill: #fff; stroke: #dbe2e6; stroke-width: 1; }
-.plot-issue-cell { fill: #f8fafb; }
-.plot-header { fill: #586976; font-size: 12px; font-weight: 700; text-anchor: middle; }
-.plot-issue { fill: #485965; font-size: 12px; font-weight: 700; text-anchor: middle; }
-.plot-date { fill: #8997a2; font-size: 10px; text-anchor: middle; }
-.plot-digit { fill: #31414c; font-size: 25px; font-weight: 700; text-anchor: middle; }
-.plot-digit.marked { fill: #fff; }
-.plot-hit { fill: #a900bf; stroke: #fff; stroke-width: 3; }
-.plot-pair-line { stroke: #a900bf; stroke-width: 4; stroke-linecap: round; }
-.plot-shift-line { stroke: #a900bf; stroke-width: 3; stroke-linecap: round; opacity: .8; }
-.plot-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 9px 12px; color: var(--muted); font-size: 10px; border-top: 1px solid var(--line); }
-.plot-legend span { display: inline-flex; align-items: center; gap: 5px; }
-.plot-legend b { color: #861096; font-size: 10px; }
-.plot-legend em { font-style: normal; color: #8a969e; }
-.plot-dot { width: 10px; height: 10px; border-radius: 50%; background: #a900bf; }
-.plot-slash { width: 14px; height: 2px; background: #a900bf; transform: rotate(-30deg); }
+.focus-list.line-observation { padding: 10px 12px 8px; }
+.pl3-motif-board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.motif-card { min-width: 0; border: 1px solid #dfe5e8; background: #fbfcfc; }
+.motif-card header { height: 28px; padding: 0 8px; display: flex; align-items: center; justify-content: space-between; background: #f1f4f5; border-bottom: 1px solid #dfe5e8; }
+.motif-card header strong { color: #34434e; font-size: 11px; }
+.motif-card header span { color: var(--muted); font-size: 9px; }
+.motif-card svg { display: block; width: 100%; height: auto; font-family: inherit; }
+.motif-head { fill: #f4f7f8; }
+.motif-cell, .motif-label-cell { fill: #fff; stroke: #dbe2e6; stroke-width: 1; }
+.motif-label-cell { fill: #f8fafb; }
+.motif-header { fill: #72818a; font-size: 9px; font-weight: 700; text-anchor: middle; }
+.motif-issue { fill: #74828c; font-size: 9px; text-anchor: middle; }
+.motif-digit { fill: #364650; font-size: 16px; font-weight: 700; text-anchor: middle; }
+.motif-digit.marked { fill: #fff; }
+.motif-hit { stroke: #fff; stroke-width: 2; }
+.motif-line { fill: none; stroke-width: 2.5; stroke-linecap: round; opacity: .82; }
+.motif-hit.pair, .motif-line.pair { fill: #a900bf; stroke: #a900bf; }
+.motif-hit.carry, .motif-line.carry { fill: #1986a1; stroke: #1986a1; }
+.motif-hit.stair, .motif-line.stair { fill: #cc6d12; stroke: #cc6d12; }
+.motif-hit.neighbor, .motif-line.neighbor { fill: #4a8c3a; stroke: #4a8c3a; }
+.motif-card p { min-height: 28px; margin: 0; padding: 5px 8px 7px; color: #62727c; font-size: 10px; line-height: 1.35; }
+.motif-empty { display: grid; min-height: 146px; place-items: center; padding: 8px; color: #8a979f; font-size: 10px; text-align: center; }
+.motif-footnote { padding: 8px 1px 0; color: #82909a; font-size: 10px; }
 .focus-row { min-height: 29px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #edf0f2; }
 .focus-row:last-child { border-bottom: 0; }
 .focus-row b { color: #34434e; font-size: 12px; }
@@ -339,6 +342,8 @@ td.number { color: var(--red); font-weight: 800; letter-spacing: 4px; }
   .daily-item { min-height: 128px; }
   .focus-group.wide-focus { grid-column: auto; }
   .focus-list.horizontal { grid-template-columns: 1fr; }
+  .pl3-motif-board { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .focus-list.line-observation { padding: 8px; }
   .overview-note { padding: 12px 14px 18px; }
   .recommend-layout { display: flex; flex-direction: column; }
   .model-controls { order: -1; padding: 16px; border-bottom: 1px solid var(--line); }

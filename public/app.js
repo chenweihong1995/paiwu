@@ -1057,53 +1057,67 @@ function pl5WideFocus(draws) {
   return [...pl5Distribution, ...pl5Positions];
 }
 
-function pl3LineObservationMarkup(draws) {
-  const recent = draws.slice(-6);
-  const rowHeight = 56;
-  const labelWidth = 112;
-  const cellWidth = 142;
-  const headerHeight = 38;
-  const width = labelWidth + cellWidth * 3;
-  const height = headerHeight + rowHeight * recent.length;
-  const cellCenter = (position) => labelWidth + cellWidth * position + cellWidth / 2;
-  const rowCenter = (row) => headerHeight + rowHeight * row + rowHeight / 2;
-  const markedCells = new Set();
-  const segments = [];
-  const notes = [];
-
-  for (let row = 0; row < recent.length - 1; row += 1) {
-    const current = drawDigits(recent[row], 3);
-    const next = drawDigits(recent[row + 1], 3);
-    for (let start = 0; start < 2; start += 1) {
-      const pair = current.slice(start, start + 2).join('');
-      const nextStart = start === 0 ? 1 : 0;
-      if (next.slice(nextStart, nextStart + 2).join('') !== pair) continue;
-      [start, start + 1].forEach((position) => markedCells.add(`${row}-${position}`));
-      [nextStart, nextStart + 1].forEach((position) => markedCells.add(`${row + 1}-${position}`));
-      const direction = nextStart > start ? '右移' : '左移';
-      notes.push(`${pair}${direction}`);
-      segments.push(
-        `<line class="plot-pair-line" x1="${cellCenter(start)}" y1="${rowCenter(row)}" x2="${cellCenter(start + 1)}" y2="${rowCenter(row)}" />`,
-        `<line class="plot-pair-line" x1="${cellCenter(nextStart)}" y1="${rowCenter(row + 1)}" x2="${cellCenter(nextStart + 1)}" y2="${rowCenter(row + 1)}" />`,
-        `<line class="plot-shift-line" x1="${cellCenter(start)}" y1="${rowCenter(row)}" x2="${cellCenter(nextStart)}" y2="${rowCenter(row + 1)}" />`,
-        `<line class="plot-shift-line" x1="${cellCenter(start + 1)}" y1="${rowCenter(row)}" x2="${cellCenter(nextStart + 1)}" y2="${rowCenter(row + 1)}" />`
-      );
+function pl3MotifCandidates(draws) {
+  const found = { pair: [], carry: [], stair: [], neighbor: [] };
+  const first = Math.max(0, draws.length - 30);
+  for (let row = first; row < draws.length - 1; row += 1) {
+    const current = drawDigits(draws[row], 3);
+    const next = drawDigits(draws[row + 1], 3);
+    for (let position = 0; position < 2; position += 1) {
+      const pair = current.slice(position, position + 2).join('');
+      const target = position === 0 ? 1 : 0;
+      if (next.slice(target, target + 2).join('') === pair) found.pair.push({ row, points: [[row, position], [row, position + 1], [row + 1, target], [row + 1, target + 1]], lines: [[[row, position], [row, position + 1]], [[row + 1, target], [row + 1, target + 1]], [[row, position], [row + 1, target]], [[row, position + 1], [row + 1, target + 1]]], detail: `${pair}${target > position ? '右移' : '左移'}` });
+    }
+    for (let position = 0; position < 3; position += 1) {
+      [-1, 1].forEach((step) => {
+        const target = position + step;
+        if (target >= 0 && target < 3 && current[position] === next[target]) found.carry.push({ row, points: [[row, position], [row + 1, target]], lines: [[[row, position], [row + 1, target]]], detail: `${current[position]}从${['百', '十', '个'][position]}位移至${['百', '十', '个'][target]}位` });
+        if (target >= 0 && target < 3 && Math.abs(current[position] - next[target]) === 1) found.neighbor.push({ row, points: [[row, position], [row + 1, target]], lines: [[[row, position], [row + 1, target]]], detail: `${current[position]}→${next[target]}跨位邻号` });
+      });
     }
   }
+  for (let row = first; row < draws.length - 2; row += 1) {
+    for (let position = 0; position < 3; position += 1) {
+      const values = [drawDigits(draws[row], 3)[position], drawDigits(draws[row + 1], 3)[position], drawDigits(draws[row + 2], 3)[position]];
+      const step = values[1] - values[0];
+      if (Math.abs(step) === 1 && values[2] - values[1] === step) found.stair.push({ row, points: [[row, position], [row + 1, position], [row + 2, position]], lines: [[[row, position], [row + 1, position]], [[row + 1, position], [row + 2, position]]], detail: `${['百', '十', '个'][position]}位${step > 0 ? '斜升' : '斜降'} ${values.join('→')}` });
+    }
+  }
+  return found;
+}
 
-  const gridRows = recent.map((draw, row) => `<rect class="plot-issue-cell" x="0" y="${headerHeight + rowHeight * row}" width="${labelWidth}" height="${rowHeight}" />${[0, 1, 2].map((position) => `<rect class="plot-cell" x="${labelWidth + cellWidth * position}" y="${headerHeight + rowHeight * row}" width="${cellWidth}" height="${rowHeight}" />`).join('')}`).join('');
-  const labels = recent.map((draw, row) => {
-    const issue = String(draw.issue || '').slice(-6);
-    const date = String(draw.kjdate || '').slice(5);
-    return `<text class="plot-issue" x="${labelWidth / 2}" y="${rowCenter(row) - 3}">${issue}期</text><text class="plot-date" x="${labelWidth / 2}" y="${rowCenter(row) + 14}">${date}</text>`;
+function pl3MotifChart(draws, motif, type) {
+  if (!motif) return '<div class="motif-empty">近30期未检出该类连续轨迹</div>';
+  const start = Math.max(0, Math.min(motif.row - 1, draws.length - 4));
+  const slice = draws.slice(start, start + 4);
+  const rowHeight = 31;
+  const labelWidth = 45;
+  const cellWidth = 46;
+  const headerHeight = 22;
+  const width = labelWidth + cellWidth * 3;
+  const height = headerHeight + rowHeight * slice.length;
+  const center = (row, position) => [labelWidth + cellWidth * position + cellWidth / 2, headerHeight + rowHeight * row + rowHeight / 2];
+  const points = new Set(motif.points.map(([row, position]) => `${row - start}-${position}`));
+  const grid = slice.map((draw, row) => `<rect class="motif-label-cell" x="0" y="${headerHeight + row * rowHeight}" width="${labelWidth}" height="${rowHeight}" />${[0, 1, 2].map((position) => `<rect class="motif-cell" x="${labelWidth + position * cellWidth}" y="${headerHeight + row * rowHeight}" width="${cellWidth}" height="${rowHeight}" />`).join('')}`).join('');
+  const lines = motif.lines.map(([from, to]) => { const a = center(from[0] - start, from[1]); const b = center(to[0] - start, to[1]); return `<line class="motif-line ${type}" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" />`; }).join('');
+  const labels = slice.map((draw, row) => `<text class="motif-issue" x="${labelWidth / 2}" y="${headerHeight + row * rowHeight + 19}">${String(draw.issue || '').slice(-3)}</text>`).join('');
+  const values = slice.map((draw, row) => drawDigits(draw, 3).map((digit, position) => { const hit = points.has(`${row}-${position}`); const [x, y] = center(row, position); return `${hit ? `<circle class="motif-hit ${type}" cx="${x}" cy="${y}" r="12" />` : ''}<text class="motif-digit${hit ? ' marked' : ''}" x="${x}" y="${y + 5}">${digit}</text>`; }).join('')).join('');
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${motif.detail}走势"><rect class="motif-head" x="0" y="0" width="${width}" height="${headerHeight}" /><text class="motif-header" x="${labelWidth / 2}" y="15">期</text><text class="motif-header" x="${labelWidth + cellWidth / 2}" y="15">百</text><text class="motif-header" x="${labelWidth + cellWidth * 1.5}" y="15">十</text><text class="motif-header" x="${labelWidth + cellWidth * 2.5}" y="15">个</text>${grid}${lines}${labels}${values}</svg>`;
+}
+
+function pl3MotifBoardMarkup(draws) {
+  const found = pl3MotifCandidates(draws);
+  const cards = [
+    ['pair', '相邻两码平移', '同一有序两码在下一期左/右移一位'],
+    ['carry', '同码跨位', '同一数字从相邻位置移到下一期'],
+    ['stair', '定位斜升/斜降', '同一位置连续两次加1或减1'],
+    ['neighbor', '跨位邻号接力', '相邻位置之间出现相差1的接力']
+  ].map(([type, title, rule]) => {
+    const motif = found[type].at(-1);
+    const issue = motif ? `${String(draws[motif.row].issue || '')}期` : '近30期';
+    return `<article class="motif-card"><header><strong>${title}</strong><span>${issue}</span></header>${pl3MotifChart(draws, motif, type)}<p>${motif ? motif.detail : rule}</p></article>`;
   }).join('');
-  const values = recent.map((draw, row) => drawDigits(draw, 3).map((digit, position) => {
-    const hit = markedCells.has(`${row}-${position}`);
-    return `${hit ? `<circle class="plot-hit" cx="${cellCenter(position)}" cy="${rowCenter(row)}" r="20" />` : ''}<text class="plot-digit${hit ? ' marked' : ''}" x="${cellCenter(position)}" y="${rowCenter(row) + 7}">${digit}</text>`;
-  }).join('')).join('');
-  const shiftNote = notes.length ? `已识别：${[...new Set(notes)].join('、')}` : '近6期未识别到相邻两码平移';
-
-  return `<div class="pl3-line-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="排列三近6期相邻两码平移走势观察图"><rect class="plot-head" x="0" y="0" width="${width}" height="${headerHeight}" /><text class="plot-header" x="${labelWidth / 2}" y="25">期号</text><text class="plot-header" x="${cellCenter(0)}" y="25">百位</text><text class="plot-header" x="${cellCenter(1)}" y="25">十位</text><text class="plot-header" x="${cellCenter(2)}" y="25">个位</text>${gridRows}${segments.join('')}${labels}${values}</svg><div class="plot-legend"><span><i class="plot-dot"></i>相邻两码</span><span><i class="plot-slash"></i>相邻期左/右平移</span><b>${shiftNote}</b><em>仅作历史轨迹记录</em></div></div>`;
+  return `<div class="pl3-motif-board">${cards}</div><div class="motif-footnote">自动从近30期筛选连续图形；图形只描述已发生的号码路径，不推导下一期结果。</div>`;
 }
 
 function renderPl3OverviewFocus(pl3) {
@@ -1113,7 +1127,7 @@ function renderPl3OverviewFocus(pl3) {
   $('#focus-group-title').textContent = '组三组六形态';
   $('#focus-group-meta').textContent = '组选';
   $('#focus-wide-title').textContent = '近期开奖人眼走势观察';
-  $('#focus-wide-meta').textContent = '自动划线';
+  $('#focus-wide-meta').textContent = '近30期识别';
   const directFocus = rankedOmissions(pl3, directRoutes, (draw) => drawDigits(draw, 3).map((digit) => digit % 3).join(''), 5)
     .map((item) => ({ ...item, label: `${item.label}路` }));
   $('#focus-route').innerHTML = focusRows(directFocus);
@@ -1134,7 +1148,7 @@ function renderPl3OverviewFocus(pl3) {
   $('#focus-group-type').innerHTML = focusRows([...groupFocus, ...tailFocus]);
   $('#focus-pl5').classList.remove('horizontal');
   $('#focus-pl5').classList.add('line-observation');
-  $('#focus-pl5').innerHTML = pl3LineObservationMarkup(pl3);
+  $('#focus-pl5').innerHTML = pl3MotifBoardMarkup(pl3);
 }
 
 function renderPl5OverviewFocus(pl5) {
