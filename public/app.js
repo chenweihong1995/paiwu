@@ -822,6 +822,7 @@ function saveKl8DailyRecommendation(draws, tenPlan, twelvePlan) {
   };
   saveLocalReviewEntry(snapshot);
   fetch('/api/recommendations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot) })
+    .then((response) => { if (!response.ok) throw new Error('snapshot save failed'); })
     .catch(() => savedDailySnapshots.delete(key));
 }
 
@@ -892,6 +893,16 @@ function mergeReviewEntries(serverEntries) {
   return [...merged.values()].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
+async function syncPendingReviewEntries(lottery) {
+  const pending = readLocalReviewHistory().filter((entry) => entry.lottery === lottery && entry.status === 'pending');
+  await Promise.all(pending.map(async (entry) => {
+    const response = await fetch('/api/recommendations', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry)
+    });
+    if (!response.ok) throw new Error('local snapshot sync failed');
+  }));
+}
+
 function applyReviewAdaptation(lottery, adaptation) {
   if (!adaptation?.weights?.length) return;
   const previous = adaptiveWindowWeights[lottery] || [];
@@ -942,7 +953,8 @@ function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(snapshot)
-  }).catch(() => savedDailySnapshots.delete(key));
+  }).then((response) => { if (!response.ok) throw new Error('snapshot save failed'); })
+    .catch(() => savedDailySnapshots.delete(key));
 }
 
 function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
@@ -1229,7 +1241,8 @@ function renderReviewRows(entries) {
 async function renderReview() {
   $('#review-summary').textContent = '正在核对历史推荐与最新开奖...';
   try {
-    const response = await fetch(`/api/recommendations?lottery=${state.lottery}`);
+    await syncPendingReviewEntries(state.lottery);
+    const response = await fetch(`/api/recommendations?lottery=${state.lottery}&refresh=1`);
     const result = await response.json();
     applyReviewAdaptation(state.lottery, result.adaptation);
     renderReviewRows(mergeReviewEntries(result.data || []).filter((entry) => entry.lottery === state.lottery));

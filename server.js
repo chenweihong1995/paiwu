@@ -119,15 +119,15 @@ function parseBody(request) {
 function isValidSnapshot(snapshot) {
   return snapshot && ['pl3', 'pl5', 'kl8'].includes(snapshot.lottery) && /^\d+$/.test(String(snapshot.sourceIssue || ''))
     && /^\d{4}-\d{2}-\d{2}$/.test(String(snapshot.date || '')) && Array.isArray(snapshot.recommendations)
-    && snapshot.recommendations.length > 0 && snapshot.recommendations.length <= 4;
+    && snapshot.recommendations.length > 0 && snapshot.recommendations.length <= 6;
 }
 
 function settleRecommendationHistory(history, drawsByLottery) {
   let changed = false;
   history.forEach((entry) => {
     const draws = drawsByLottery[entry.lottery] || [];
-    const sourceIndex = draws.findIndex((draw) => String(draw.issue) === String(entry.sourceIssue));
-    const target = sourceIndex >= 0 ? draws[sourceIndex + 1] : null;
+    const target = draws.filter((draw) => Number(draw.issue) > Number(entry.sourceIssue))
+      .sort((a, b) => Number(a.issue) - Number(b.issue))[0];
     if (!target) return;
     const actual = normalizeDraw(target, entry.lottery).winnum.replace(/\s/g, '');
     const results = entry.recommendations.map((recommendation) => {
@@ -221,10 +221,11 @@ const server = http.createServer(async (request, response) => {
     if (request.method === 'GET') {
       const lottery = url.searchParams.get('lottery');
       const history = readRecommendationHistory();
+      const refresh = url.searchParams.get('refresh') === '1';
       const drawsByLottery = {
-        pl3: await getDraws('pl3'),
-        pl5: await getDraws('pl5'),
-        kl8: await getDraws('kl8')
+        pl3: await getDraws('pl3', refresh),
+        pl5: await getDraws('pl5', refresh),
+        kl8: await getDraws('kl8', refresh)
       };
       if (settleRecommendationHistory(history, drawsByLottery)) writeRecommendationHistory(history);
       const entries = history.filter((entry) => !lottery || entry.lottery === lottery)
