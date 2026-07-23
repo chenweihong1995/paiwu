@@ -1079,7 +1079,11 @@ function mergePairShiftChains(candidates, positionCount, drawCount) {
       row: tail.row + 2,
       start: nextStart,
       pair: tail.pair,
-      lines: [[[tail.row + 1, tail.target], [tail.row + 2, nextStart]], [[tail.row + 1, tail.target + 1], [tail.row + 2, nextStart + 1]]]
+      lines: [
+        [[tail.row + 1, tail.target], [tail.row + 2, nextStart]],
+        [[tail.row + 1, tail.target + 1], [tail.row + 2, nextStart + 1]],
+        [[tail.row + 2, nextStart], [tail.row + 2, nextStart + 1]]
+      ]
     } : null;
     return {
       row: candidate.row,
