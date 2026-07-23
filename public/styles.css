@@ -107,6 +107,26 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .focus-observation:last-child { border-bottom: 0; }
 .focus-observation b { display: block; color: #34434e; font-size: 12px; }
 .focus-observation span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; letter-spacing: 0; overflow-wrap: anywhere; }
+.focus-list.line-observation { padding: 0; }
+.pl3-line-chart { overflow-x: auto; background: #fff; }
+.pl3-line-chart svg { display: block; min-width: 538px; width: 100%; height: auto; font-family: inherit; }
+.plot-head { fill: #f4f7f8; }
+.plot-cell, .plot-issue-cell { fill: #fff; stroke: #dbe2e6; stroke-width: 1; }
+.plot-issue-cell { fill: #f8fafb; }
+.plot-header { fill: #586976; font-size: 12px; font-weight: 700; text-anchor: middle; }
+.plot-issue { fill: #485965; font-size: 12px; font-weight: 700; text-anchor: middle; }
+.plot-date { fill: #8997a2; font-size: 10px; text-anchor: middle; }
+.plot-digit { fill: #31414c; font-size: 25px; font-weight: 700; text-anchor: middle; }
+.plot-digit.marked { fill: #fff; }
+.plot-hit { fill: #a900bf; stroke: #fff; stroke-width: 3; }
+.plot-pair-line { stroke: #a900bf; stroke-width: 4; stroke-linecap: round; }
+.plot-shift-line { stroke: #a900bf; stroke-width: 3; stroke-linecap: round; opacity: .8; }
+.plot-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 9px 12px; color: var(--muted); font-size: 10px; border-top: 1px solid var(--line); }
+.plot-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.plot-legend b { color: #861096; font-size: 10px; }
+.plot-legend em { font-style: normal; color: #8a969e; }
+.plot-dot { width: 10px; height: 10px; border-radius: 50%; background: #a900bf; }
+.plot-slash { width: 14px; height: 2px; background: #a900bf; transform: rotate(-30deg); }
 .focus-row { min-height: 29px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #edf0f2; }
 .focus-row:last-child { border-bottom: 0; }
 .focus-row b { color: #34434e; font-size: 12px; }

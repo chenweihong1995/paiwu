@@ -1057,32 +1057,53 @@ function pl5WideFocus(draws) {
   return [...pl5Distribution, ...pl5Positions];
 }
 
-function pl3HumanObservations(draws) {
+function pl3LineObservationMarkup(draws) {
   const recent = draws.slice(-6);
-  const names = ['百位', '十位', '个位'];
-  const positionNotes = names.map((name, position) => {
-    const values = recent.map((draw) => drawDigits(draw, 3)[position]);
-    const diffs = values.slice(1).map((value, index) => value - values[index]);
-    const latestDiffs = diffs.slice(-3);
-    const rising = latestDiffs.length === 3 && latestDiffs.every((diff) => diff === 1);
-    const falling = latestDiffs.length === 3 && latestDiffs.every((diff) => diff === -1);
-    const alternating = latestDiffs.length === 3 && latestDiffs.every((diff, index) => index === 0 || Math.sign(diff) !== Math.sign(latestDiffs[index - 1]));
-    const state = rising ? '连续斜升' : falling ? '连续斜降' : alternating ? '折线交替' : '近6期轨迹';
-    return `<div class="focus-observation"><b>${name}${state}</b><span>${values.join(' → ')}</span></div>`;
-  });
-  const latest = drawDigits(draws[draws.length - 1], 3);
-  const previous = drawDigits(draws[draws.length - 2], 3);
-  const repeated = latest.filter((digit) => previous.includes(digit));
-  const sorted = [...latest].sort((a, b) => a - b);
-  const adjacent = sorted.filter((digit, index) => index && digit - sorted[index - 1] === 1);
-  const totals = recent.map((draw) => sum(drawDigits(draw, 3)));
-  const spans = recent.map((draw) => { const values = drawDigits(draw, 3); return Math.max(...values) - Math.min(...values); });
-  const routes = recent.slice(-4).map((draw) => drawDigits(draw, 3).map((digit) => digit % 3).join('')).join(' → ');
-  return [...positionNotes,
-    `<div class="focus-observation"><b>重号 / 邻号</b><span>与上期重号：${repeated.length ? repeated.join('、') : '无'}；本期邻号：${adjacent.length ? '有' : '无'}</span></div>`,
-    `<div class="focus-observation"><b>和值 / 跨度节奏</b><span>和值 ${totals.join(' → ')}；跨度 ${spans.join(' → ')}</span></div>`,
-    `<div class="focus-observation"><b>近4期012路</b><span>${routes}</span></div>`
-  ].join('');
+  const rowHeight = 56;
+  const labelWidth = 112;
+  const cellWidth = 142;
+  const headerHeight = 38;
+  const width = labelWidth + cellWidth * 3;
+  const height = headerHeight + rowHeight * recent.length;
+  const cellCenter = (position) => labelWidth + cellWidth * position + cellWidth / 2;
+  const rowCenter = (row) => headerHeight + rowHeight * row + rowHeight / 2;
+  const markedCells = new Set();
+  const segments = [];
+  const notes = [];
+
+  for (let row = 0; row < recent.length - 1; row += 1) {
+    const current = drawDigits(recent[row], 3);
+    const next = drawDigits(recent[row + 1], 3);
+    for (let start = 0; start < 2; start += 1) {
+      const pair = current.slice(start, start + 2).join('');
+      const nextStart = start === 0 ? 1 : 0;
+      if (next.slice(nextStart, nextStart + 2).join('') !== pair) continue;
+      [start, start + 1].forEach((position) => markedCells.add(`${row}-${position}`));
+      [nextStart, nextStart + 1].forEach((position) => markedCells.add(`${row + 1}-${position}`));
+      const direction = nextStart > start ? '右移' : '左移';
+      notes.push(`${pair}${direction}`);
+      segments.push(
+        `<line class="plot-pair-line" x1="${cellCenter(start)}" y1="${rowCenter(row)}" x2="${cellCenter(start + 1)}" y2="${rowCenter(row)}" />`,
+        `<line class="plot-pair-line" x1="${cellCenter(nextStart)}" y1="${rowCenter(row + 1)}" x2="${cellCenter(nextStart + 1)}" y2="${rowCenter(row + 1)}" />`,
+        `<line class="plot-shift-line" x1="${cellCenter(start)}" y1="${rowCenter(row)}" x2="${cellCenter(nextStart)}" y2="${rowCenter(row + 1)}" />`,
+        `<line class="plot-shift-line" x1="${cellCenter(start + 1)}" y1="${rowCenter(row)}" x2="${cellCenter(nextStart + 1)}" y2="${rowCenter(row + 1)}" />`
+      );
+    }
+  }
+
+  const gridRows = recent.map((draw, row) => `<rect class="plot-issue-cell" x="0" y="${headerHeight + rowHeight * row}" width="${labelWidth}" height="${rowHeight}" />${[0, 1, 2].map((position) => `<rect class="plot-cell" x="${labelWidth + cellWidth * position}" y="${headerHeight + rowHeight * row}" width="${cellWidth}" height="${rowHeight}" />`).join('')}`).join('');
+  const labels = recent.map((draw, row) => {
+    const issue = String(draw.issue || '').slice(-6);
+    const date = String(draw.kjdate || '').slice(5);
+    return `<text class="plot-issue" x="${labelWidth / 2}" y="${rowCenter(row) - 3}">${issue}期</text><text class="plot-date" x="${labelWidth / 2}" y="${rowCenter(row) + 14}">${date}</text>`;
+  }).join('');
+  const values = recent.map((draw, row) => drawDigits(draw, 3).map((digit, position) => {
+    const hit = markedCells.has(`${row}-${position}`);
+    return `${hit ? `<circle class="plot-hit" cx="${cellCenter(position)}" cy="${rowCenter(row)}" r="20" />` : ''}<text class="plot-digit${hit ? ' marked' : ''}" x="${cellCenter(position)}" y="${rowCenter(row) + 7}">${digit}</text>`;
+  }).join('')).join('');
+  const shiftNote = notes.length ? `已识别：${[...new Set(notes)].join('、')}` : '近6期未识别到相邻两码平移';
+
+  return `<div class="pl3-line-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="排列三近6期相邻两码平移走势观察图"><rect class="plot-head" x="0" y="0" width="${width}" height="${headerHeight}" /><text class="plot-header" x="${labelWidth / 2}" y="25">期号</text><text class="plot-header" x="${cellCenter(0)}" y="25">百位</text><text class="plot-header" x="${cellCenter(1)}" y="25">十位</text><text class="plot-header" x="${cellCenter(2)}" y="25">个位</text>${gridRows}${segments.join('')}${labels}${values}</svg><div class="plot-legend"><span><i class="plot-dot"></i>相邻两码</span><span><i class="plot-slash"></i>相邻期左/右平移</span><b>${shiftNote}</b><em>仅作历史轨迹记录</em></div></div>`;
 }
 
 function renderPl3OverviewFocus(pl3) {
@@ -1092,7 +1113,7 @@ function renderPl3OverviewFocus(pl3) {
   $('#focus-group-title').textContent = '组三组六形态';
   $('#focus-group-meta').textContent = '组选';
   $('#focus-wide-title').textContent = '近期开奖人眼走势观察';
-  $('#focus-wide-meta').textContent = '只作记录';
+  $('#focus-wide-meta').textContent = '自动划线';
   const directFocus = rankedOmissions(pl3, directRoutes, (draw) => drawDigits(draw, 3).map((digit) => digit % 3).join(''), 5)
     .map((item) => ({ ...item, label: `${item.label}路` }));
   $('#focus-route').innerHTML = focusRows(directFocus);
@@ -1111,7 +1132,9 @@ function renderPl3OverviewFocus(pl3) {
   const groupFocus = rankedOmissions(pl3, ['豹子', '组三', '组六'], (draw) => ['', '豹子', '组三', '组六'][new Set(drawDigits(draw, 3)).size], 3);
   const tailFocus = rankedOmissions(pl3, Array.from({ length: 10 }, (_, value) => value), (draw) => sum(drawDigits(draw, 3)) % 10, 2).map((item) => ({ ...item, label: `和尾 ${item.label}` }));
   $('#focus-group-type').innerHTML = focusRows([...groupFocus, ...tailFocus]);
-  $('#focus-pl5').innerHTML = pl3HumanObservations(pl3);
+  $('#focus-pl5').classList.remove('horizontal');
+  $('#focus-pl5').classList.add('line-observation');
+  $('#focus-pl5').innerHTML = pl3LineObservationMarkup(pl3);
 }
 
 function renderPl5OverviewFocus(pl5) {
@@ -1141,6 +1164,8 @@ function renderPl5OverviewFocus(pl5) {
     .map((item) => ({ ...item, label: `${item.label}种号` }));
   const tailFocus = rankedOmissions(pl5, Array.from({ length: 10 }, (_, value) => value), (draw) => sum(drawDigits(draw, 5)) % 10, 2).map((item) => ({ ...item, label: `和尾 ${item.label}` }));
   $('#focus-group-type').innerHTML = focusRows([...repeatFocus, ...tailFocus]);
+  $('#focus-pl5').classList.remove('line-observation');
+  $('#focus-pl5').classList.add('horizontal');
   $('#focus-pl5').innerHTML = focusRows(pl5WideFocus(pl5));
 }
 
