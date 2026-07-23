@@ -1,11 +1,16 @@
 const state = { lottery: 'pl5', draws: [], periods: 50, mode: 'position', lines: true, view: 'overview' };
 const overviewData = { pl3: [], pl5: [], kl8: [] };
+const lotteryTotals = { pl3: 0, pl5: 0, kl8: 0 };
+const fullHistoryPromises = { pl3: null, pl5: null, kl8: null };
 let overviewAnalysisTimer = null;
 let overviewAnalysisKey = '';
 const overviewRecommendations = { pl3: { wide: [], narrow: [], singles: [] }, pl5: { wide: [], narrow: [] }, kl8: { ten: [], twelve: [] } };
 const algorithmCaches = { pl3: null, pl5: null };
 const savedDailySnapshots = new Set();
 const LOCAL_REVIEW_HISTORY_KEY = 'lottery-recommendation-history-v1';
+const LOCAL_DRAW_CACHE_KEY = 'lottery-draw-cache-v2';
+const BOOTSTRAP_LIMIT = 600;
+const FULL_HISTORY_LIMIT = 10000;
 const RECOMMENDATION_WINDOW = 100;
 const BACKTEST_WINDOW = 360;
 const VALIDATION_WINDOW = 180;
@@ -54,6 +59,39 @@ const drawDigits = (draw, count) => String(draw?.winnum || '').replace(/<[^>]*>/
 const digits = (draw) => drawDigits(draw, digitCount());
 const sum = (values) => values.reduce((a, b) => a + b, 0);
 const isPrime = (n) => [1, 2, 3, 5, 7].includes(n);
+
+function compactDraw(draw) {
+  return { issue: draw.issue, kjdate: draw.kjdate, winnum: draw.winnum };
+}
+
+function hydrateDrawCache() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LOCAL_DRAW_CACHE_KEY) || '{}');
+    ['pl3', 'pl5', 'kl8'].forEach((lottery) => {
+      const entry = stored[lottery];
+      if (!Array.isArray(entry?.data) || !entry.data.length) return;
+      overviewData[lottery] = entry.data;
+      lotteryTotals[lottery] = Number(entry.total) || entry.data.length;
+    });
+  } catch (_) {
+    localStorage.removeItem(LOCAL_DRAW_CACHE_KEY);
+  }
+  state.draws = overviewData[state.lottery];
+}
+
+function persistDrawCache(lottery, draws, total) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LOCAL_DRAW_CACHE_KEY) || '{}');
+    stored[lottery] = {
+      total,
+      updatedAt: Date.now(),
+      data: draws.slice(-BOOTSTRAP_LIMIT).map(compactDraw)
+    };
+    localStorage.setItem(LOCAL_DRAW_CACHE_KEY, JSON.stringify(stored));
+  } catch (_) {
+    // A full browser storage area should never prevent live data from rendering.
+  }
+}
 
 function refreshLotteryConfig() {
   positionNames = state.lottery === 'pl3' ? ['百位', '十位', '个位'] : ['万位', '千位', '百位', '十位', '个位'];
@@ -1383,16 +1421,18 @@ function renderOverview() {
   if (overviewAnalysisKey === key) return;
   overviewAnalysisKey = key;
   if (overviewAnalysisTimer) clearTimeout(overviewAnalysisTimer);
+  const analyze = () => {
+    if (state.view !== 'overview' || `${state.lottery}:${overviewData[state.lottery].at(-1)?.issue || ''}` !== key) {
+      overviewAnalysisKey = '';
+      return;
+    }
+    buildDailyOverview(activeDraws, state.lottery);
+    if (state.lottery === 'pl3') renderPl3OverviewFocus(activeDraws);
+    else renderPl5OverviewFocus(activeDraws);
+  };
   requestAnimationFrame(() => {
-    overviewAnalysisTimer = setTimeout(() => {
-      if (state.view !== 'overview' || `${state.lottery}:${overviewData[state.lottery].at(-1)?.issue || ''}` !== key) {
-        overviewAnalysisKey = '';
-        return;
-      }
-      buildDailyOverview(activeDraws, state.lottery);
-      if (state.lottery === 'pl3') renderPl3OverviewFocus(activeDraws);
-      else renderPl5OverviewFocus(activeDraws);
-    }, 16);
+    if ('requestIdleCallback' in window) requestIdleCallback(analyze, { timeout: 800 });
+    else overviewAnalysisTimer = setTimeout(analyze, 120);
   });
 }
 
@@ -1400,9 +1440,15 @@ async function loadOverviewData(refresh = false) {
   renderOverview();
   const missing = ['pl3', 'pl5', 'kl8'].filter((lottery) => lottery !== state.lottery && (refresh || !overviewData[lottery].length));
   missing.forEach(async (lottery) => {
-    const response = await fetch(`/api/draws?lottery=${lottery}&limit=10000${refresh ? '&refresh=1' : ''}`);
-    const result = await response.json();
-    overviewData[lottery] = result.data;
+    try {
+      const response = await fetch(`/api/draws?lottery=${lottery}&limit=${BOOTSTRAP_LIMIT}${refresh ? '&refresh=1' : ''}`);
+      const result = await response.json();
+      overviewData[lottery] = result.data;
+      lotteryTotals[lottery] = result.total;
+      persistDrawCache(lottery, result.data, result.total);
+    } catch (_) {
+      // Other lotteries are prefetched opportunistically and must not delay the active one.
+    }
   });
 }
 
@@ -1829,7 +1875,12 @@ function showView(view) {
   if (view === 'overview') renderOverview();
   if (view === 'recommend') generateRecommendation();
   if (view === 'review') renderReview();
-  if (view === 'history') renderHistory($('#history-search').value.trim());
+  if (view === 'history') {
+    renderHistory($('#history-search').value.trim());
+    ensureFullHistory(state.lottery).then(() => {
+      if (state.view === 'history') renderHistory($('#history-search').value.trim());
+    });
+  }
   if (view === 'selector') renderSelector();
 }
 
@@ -1838,7 +1889,7 @@ function toast(message) {
   setTimeout(() => element.classList.remove('show'), 1800);
 }
 
-function applyCustomPeriod() {
+async function applyCustomPeriod() {
   const input = $('#custom-period');
   if (!state.draws.length) {
     toast('开奖数据仍在加载，请稍候');
@@ -1850,6 +1901,10 @@ function applyCustomPeriod() {
     input.focus();
     return;
   }
+  if (requested > state.draws.length && lotteryTotals[state.lottery] > state.draws.length) {
+    toast('正在载入完整历史');
+    await ensureFullHistory(state.lottery);
+  }
   const total = state.draws.length;
   state.periods = Math.min(requested, total);
   input.value = state.periods;
@@ -1858,26 +1913,58 @@ function applyCustomPeriod() {
   renderTrend();
 }
 
+function updateActiveLotteryUi() {
+  if (!state.draws.length) return;
+  $('#custom-period').max = lotteryTotals[state.lottery] || state.draws.length;
+  $('#custom-period').title = `可输入1至${lotteryTotals[state.lottery] || state.draws.length}期`;
+  const latest = state.draws[state.draws.length - 1];
+  $('#latest-number').textContent = isHappy8() ? kl8Numbers(latest).slice(0, 5).map((number) => String(number).padStart(2, '0')).join(' ') : digits(latest).join(' ');
+  $('#latest-issue').textContent = `${latest.issue}期 · ${latest.kjdate}`;
+  if (!isHappy8() && state.view === 'trend') renderTrend();
+  renderOverview();
+  if (state.view === 'selector') renderSelector();
+}
+
+async function ensureFullHistory(lottery) {
+  if (overviewData[lottery].length >= lotteryTotals[lottery] && lotteryTotals[lottery]) return overviewData[lottery];
+  if (fullHistoryPromises[lottery]) return fullHistoryPromises[lottery];
+  fullHistoryPromises[lottery] = fetch(`/api/draws?lottery=${lottery}&limit=${FULL_HISTORY_LIMIT}`)
+    .then((response) => response.json())
+    .then((result) => {
+      overviewData[lottery] = result.data;
+      lotteryTotals[lottery] = result.total;
+      persistDrawCache(lottery, result.data, result.total);
+      if (state.lottery === lottery) {
+        state.draws = result.data;
+        updateActiveLotteryUi();
+      }
+      return result.data;
+    })
+    .catch(() => overviewData[lottery])
+    .finally(() => { fullHistoryPromises[lottery] = null; });
+  return fullHistoryPromises[lottery];
+}
+
 async function loadData(refresh = false) {
   $('#refresh-button').disabled = true;
+  const lottery = state.lottery;
   try {
-    const cachedDraws = !refresh ? overviewData[state.lottery] : [];
-    if (cachedDraws.length) state.draws = cachedDraws;
-    else {
-      const response = await fetch(`/api/draws?lottery=${state.lottery}&limit=10000${refresh ? '&refresh=1' : ''}`);
-      const result = await response.json();
-      state.draws = result.data;
-      overviewData[state.lottery] = result.data;
+    const cachedDraws = !refresh ? overviewData[lottery] : [];
+    if (cachedDraws.length && state.lottery === lottery) {
+      state.draws = cachedDraws;
+      updateActiveLotteryUi();
     }
-    await loadReviewAdaptation(state.lottery);
-    $('#custom-period').max = state.draws.length;
-    $('#custom-period').title = `可输入1至${state.draws.length}期`;
-    const latest = state.draws[state.draws.length - 1];
-    $('#latest-number').textContent = isHappy8() ? kl8Numbers(latest).slice(0, 5).map((number) => String(number).padStart(2, '0')).join(' ') : digits(latest).join(' ');
-    $('#latest-issue').textContent = `${latest.issue}期 · ${latest.kjdate}`;
-    if (!isHappy8() && state.view === 'trend') renderTrend();
-    renderOverview();
-    if (state.view === 'selector') renderSelector();
+    const adaptationPromise = loadReviewAdaptation(lottery);
+    const response = await fetch(`/api/draws?lottery=${lottery}&limit=${BOOTSTRAP_LIMIT}${refresh ? '&refresh=1' : ''}`);
+    const result = await response.json();
+    overviewData[lottery] = result.data;
+    lotteryTotals[lottery] = result.total;
+    persistDrawCache(lottery, result.data, result.total);
+    await adaptationPromise;
+    if (state.lottery === lottery) {
+      state.draws = result.data;
+      updateActiveLotteryUi();
+    }
     if (refresh) toast('开奖数据已刷新');
   } catch (error) {
     toast('数据加载失败，请稍后重试');
@@ -2040,6 +2127,7 @@ $('#minus-multiple').addEventListener('click', () => { $('#ticket-multiple').val
 $('#plus-multiple').addEventListener('click', () => { $('#ticket-multiple').value = normalizedMultiple() + 1; updateTicketCalculator(); });
 $('#copy-ticket').addEventListener('click', copyTicketNotation);
 window.addEventListener('resize', drawLines);
+hydrateDrawCache();
 renderSelector();
 showView('overview');
 loadData().then(() => loadOverviewData()).catch(() => toast('主板数据加载失败，请稍后刷新'));

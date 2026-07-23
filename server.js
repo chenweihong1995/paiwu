@@ -107,9 +107,9 @@ async function getDraws(lottery, force = false) {
   return caches[lottery];
 }
 
-function sendJson(request, response, status, value) {
+function sendJson(request, response, status, value, cacheControl = 'no-store') {
   const body = Buffer.from(JSON.stringify(value));
-  const headers = { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-store' };
+  const headers = { 'Content-Type': MIME['.json'], 'Cache-Control': cacheControl };
   if (String(request.headers['accept-encoding'] || '').includes('gzip')) {
     headers['Content-Encoding'] = 'gzip';
     response.writeHead(status, headers);
@@ -225,7 +225,9 @@ const server = http.createServer(async (request, response) => {
     const lottery = ['pl3', 'pl5', 'kl8'].includes(requestedLottery) ? requestedLottery : 'pl5';
     const draws = await getDraws(lottery, url.searchParams.get('refresh') === '1');
     const limit = Math.min(10000, Math.max(20, Number(url.searchParams.get('limit') || 300)));
-    sendJson(request, response, 200, { lottery, updatedAt: new Date().toISOString(), total: draws.length, data: draws.slice(-limit) });
+    const data = draws.slice(-limit).map(({ issue, kjdate, winnum }) => ({ issue, kjdate, winnum }));
+    const cacheControl = url.searchParams.get('refresh') === '1' ? 'no-store' : 'private, max-age=60, stale-while-revalidate=300';
+    sendJson(request, response, 200, { lottery, updatedAt: new Date().toISOString(), total: draws.length, data }, cacheControl);
     return;
   }
 
