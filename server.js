@@ -2,6 +2,7 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 
 const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -23,6 +24,8 @@ const MIME = {
 
 const caches = { pl3: null, pl5: null, kl8: null };
 const cacheTimes = { pl3: 0, pl5: 0, kl8: 0 };
+const pendingRefreshes = { pl3: null, pl5: null, kl8: null };
+let pl5Snapshot = null;
 
 function normalizeDraw(draw, lottery) {
   if (lottery === 'kl8') {
@@ -35,9 +38,12 @@ function normalizeDraw(draw, lottery) {
 }
 
 function readSnapshot(lottery) {
-  if (lottery === 'kl8') return [];
-  const raw = JSON.parse(fs.readFileSync(SNAPSHOT, 'utf8'));
-  return (raw.data?.data || raw.data || []).map((draw) => normalizeDraw(draw, lottery));
+  if (lottery !== 'pl5') return [];
+  if (!pl5Snapshot) {
+    const raw = JSON.parse(fs.readFileSync(SNAPSHOT, 'utf8'));
+    pl5Snapshot = (raw.data?.data || raw.data || []).map((draw) => normalizeDraw(draw, lottery));
+  }
+  return pl5Snapshot;
 }
 
 function fetchRemote(lottery) {
@@ -65,8 +71,27 @@ function fetchRemote(lottery) {
   });
 }
 
+function refreshInBackground(lottery) {
+  if (pendingRefreshes[lottery]) return;
+  pendingRefreshes[lottery] = fetchRemote(lottery)
+    .then((remote) => {
+      if (!remote.length) return;
+      caches[lottery] = remote;
+      cacheTimes[lottery] = Date.now();
+    })
+    .catch(() => {})
+    .finally(() => { pendingRefreshes[lottery] = null; });
+}
+
 async function getDraws(lottery, force = false) {
   if (!force && caches[lottery] && Date.now() - cacheTimes[lottery] < 10 * 60 * 1000) return caches[lottery];
+  const fallback = readSnapshot(lottery);
+  if (!force && fallback.length) {
+    caches[lottery] = fallback;
+    cacheTimes[lottery] = Date.now();
+    refreshInBackground(lottery);
+    return fallback;
+  }
   try {
     const remote = await fetchRemote(lottery);
     if (remote.length) {
@@ -77,14 +102,22 @@ async function getDraws(lottery, force = false) {
   } catch (_) {
     // The bundled snapshot keeps the tool usable during upstream downtime.
   }
-  caches[lottery] = readSnapshot(lottery);
+  caches[lottery] = fallback;
   cacheTimes[lottery] = Date.now();
   return caches[lottery];
 }
 
-function sendJson(response, status, value) {
-  response.writeHead(status, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-store' });
-  response.end(JSON.stringify(value));
+function sendJson(request, response, status, value) {
+  const body = Buffer.from(JSON.stringify(value));
+  const headers = { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-store' };
+  if (String(request.headers['accept-encoding'] || '').includes('gzip')) {
+    headers['Content-Encoding'] = 'gzip';
+    response.writeHead(status, headers);
+    response.end(zlib.gzipSync(body));
+    return;
+  }
+  response.writeHead(status, headers);
+  response.end(body);
 }
 
 function readRecommendationHistory() {
@@ -192,7 +225,7 @@ const server = http.createServer(async (request, response) => {
     const lottery = ['pl3', 'pl5', 'kl8'].includes(requestedLottery) ? requestedLottery : 'pl5';
     const draws = await getDraws(lottery, url.searchParams.get('refresh') === '1');
     const limit = Math.min(10000, Math.max(20, Number(url.searchParams.get('limit') || 300)));
-    sendJson(response, 200, { lottery, updatedAt: new Date().toISOString(), total: draws.length, data: draws.slice(-limit) });
+    sendJson(request, response, 200, { lottery, updatedAt: new Date().toISOString(), total: draws.length, data: draws.slice(-limit) });
     return;
   }
 
@@ -201,7 +234,7 @@ const server = http.createServer(async (request, response) => {
       try {
         const snapshot = await parseBody(request);
         if (!isValidSnapshot(snapshot)) {
-          sendJson(response, 400, { error: 'Invalid recommendation snapshot' });
+          sendJson(request, response, 400, { error: 'Invalid recommendation snapshot' });
           return;
         }
         const history = readRecommendationHistory();
@@ -211,9 +244,9 @@ const server = http.createServer(async (request, response) => {
         if (index >= 0) history[index] = { ...history[index], ...normalized, createdAt: history[index].createdAt };
         else history.push(normalized);
         writeRecommendationHistory(history.slice(-1000));
-        sendJson(response, 201, { id });
+        sendJson(request, response, 201, { id });
       } catch (_) {
-        sendJson(response, 400, { error: 'Unable to save recommendation snapshot' });
+        sendJson(request, response, 400, { error: 'Unable to save recommendation snapshot' });
       }
       return;
     }
@@ -222,15 +255,14 @@ const server = http.createServer(async (request, response) => {
       const lottery = url.searchParams.get('lottery');
       const history = readRecommendationHistory();
       const refresh = url.searchParams.get('refresh') === '1';
-      const drawsByLottery = {
-        pl3: await getDraws('pl3', refresh),
-        pl5: await getDraws('pl5', refresh),
-        kl8: await getDraws('kl8', refresh)
-      };
-      if (settleRecommendationHistory(history, drawsByLottery)) writeRecommendationHistory(history);
+      const summaryOnly = url.searchParams.get('summary') === '1';
+      if (!summaryOnly) {
+        const [pl3, pl5, kl8] = await Promise.all([getDraws('pl3', refresh), getDraws('pl5', refresh), getDraws('kl8', refresh)]);
+        if (settleRecommendationHistory(history, { pl3, pl5, kl8 })) writeRecommendationHistory(history);
+      }
       const entries = history.filter((entry) => !lottery || entry.lottery === lottery)
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-      sendJson(response, 200, { data: entries, adaptation: reviewAdaptation(history, lottery) });
+      sendJson(request, response, 200, { data: entries, adaptation: reviewAdaptation(history, lottery) });
       return;
     }
 

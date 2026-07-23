@@ -1,13 +1,16 @@
 const state = { lottery: 'pl5', draws: [], periods: 50, mode: 'position', lines: true, view: 'overview' };
 const overviewData = { pl3: [], pl5: [], kl8: [] };
+let overviewAnalysisTimer = null;
+let overviewAnalysisKey = '';
 const overviewRecommendations = { pl3: { wide: [], narrow: [], singles: [] }, pl5: { wide: [], narrow: [] }, kl8: { ten: [], twelve: [] } };
 const algorithmCaches = { pl3: null, pl5: null };
 const savedDailySnapshots = new Set();
 const LOCAL_REVIEW_HISTORY_KEY = 'lottery-recommendation-history-v1';
 const RECOMMENDATION_WINDOW = 100;
-const BACKTEST_WINDOW = 600;
+const BACKTEST_WINDOW = 360;
 const VALIDATION_WINDOW = 180;
 const WEIGHT_VALIDATION_WINDOW = 100;
+const MODEL_LOOKBACK = 180;
 const RECENT_WINDOWS = [30, 50, 100];
 const BASE_RECENT_WINDOW_WEIGHTS = [.45, .35, .2];
 const adaptiveWindowWeights = { pl3: BASE_RECENT_WINDOW_WEIGHTS, pl5: BASE_RECENT_WINDOW_WEIGHTS, kl8: BASE_RECENT_WINDOW_WEIGHTS };
@@ -387,7 +390,7 @@ function balancedTop(ranking, count) {
 
 const modelDefinitions = [
   ['recent30', '近30期频率'], ['recent50', '近50期频率'], ['recent100', '近100期频率'],
-  ['momentum', '30/100期动量'], ['decay50', '近50期指数衰减'], ['stable300', '300期稳定频率'],
+  ['momentum', '30/100期动量'], ['decay50', '近50期指数衰减'], ['stable300', '180期稳定频率'],
   ['transition', '位置转移'], ['hazard', '遗漏危险率'],
   ['structure', '012/奇偶/大小'], ['pattern', '前期形态转移']
 ];
@@ -423,7 +426,7 @@ function momentumScores(series, end, position) {
 function transitionScores(series, end, position) {
   const scores = Array(10).fill(.4);
   const previousDigit = series[end - 1][position];
-  for (let index = Math.max(1, end - 500); index < end; index++) {
+  for (let index = Math.max(1, end - MODEL_LOOKBACK); index < end; index++) {
     if (series[index - 1][position] === previousDigit) scores[series[index][position]] += 1;
   }
   const fallback = frequencyScores(series, end, position, 50);
@@ -431,8 +434,8 @@ function transitionScores(series, end, position) {
 }
 
 function hazardScores(series, end, position) {
-  const start = Math.max(0, end - BACKTEST_WINDOW);
-  const longFrequency = frequencyScores(series, end, position, 300);
+  const start = Math.max(0, end - MODEL_LOOKBACK);
+  const longFrequency = frequencyScores(series, end, position, MODEL_LOOKBACK);
   return Array.from({ length: 10 }, (_, digit) => {
     const occurrences = [];
     for (let index = start; index < end; index++) if (series[index][position] === digit) occurrences.push(index);
@@ -450,7 +453,7 @@ function hazardScores(series, end, position) {
 function categoryTransitionScores(series, end, position, categoryCount, mapper) {
   const scores = Array(categoryCount).fill(.5);
   const previousCategory = mapper(series[end - 1][position]);
-  for (let index = Math.max(1, end - 500); index < end; index++) {
+  for (let index = Math.max(1, end - MODEL_LOOKBACK); index < end; index++) {
     if (mapper(series[index - 1][position]) === previousCategory) scores[mapper(series[index][position])] += 1;
   }
   return normalizeScores(scores);
@@ -467,7 +470,7 @@ function structureScores(series, end, position) {
 function patternTransitionScores(series, end, position) {
   const scores = Array(10).fill(.4);
   const previousPattern = series[end - 1].map((digit) => digit % 3).join('');
-  for (let index = Math.max(1, end - BACKTEST_WINDOW); index < end; index++) {
+  for (let index = Math.max(1, end - MODEL_LOOKBACK); index < end; index++) {
     if (series[index - 1].map((digit) => digit % 3).join('') === previousPattern) scores[series[index][position]] += 1;
   }
   const frequency = frequencyScores(series, end, position, 50);
@@ -481,7 +484,7 @@ function modelRankingsAt(series, end, position) {
     recent100: frequencyScores(series, end, position, RECOMMENDATION_WINDOW, 1),
     momentum: momentumScores(series, end, position),
     decay50: decayScores(series, end, position),
-    stable300: frequencyScores(series, end, position, 300, 1),
+    stable300: frequencyScores(series, end, position, MODEL_LOOKBACK, 1),
     transition: transitionScores(series, end, position),
     hazard: normalizeScores(hazardScores(series, end, position)),
     structure: normalizeScores(structureScores(series, end, position)),
@@ -913,7 +916,7 @@ function applyReviewAdaptation(lottery, adaptation) {
 
 async function loadReviewAdaptation(lottery) {
   try {
-    const response = await fetch(`/api/recommendations?lottery=${lottery}`);
+    const response = await fetch(`/api/recommendations?lottery=${lottery}&summary=1`);
     const result = await response.json();
     applyReviewAdaptation(lottery, result.adaptation);
   } catch (_) {
@@ -1254,18 +1257,24 @@ function renderOverview() {
   const pl3 = overviewData.pl3;
   const pl5 = overviewData.pl5;
   const kl8 = overviewData.kl8;
-  if (!pl3.length || !pl5.length || !kl8.length) return;
-  const pl3Latest = pl3[pl3.length - 1];
-  const pl5Latest = pl5[pl5.length - 1];
-  const kl8Latest = kl8[kl8.length - 1];
   const activeDraws = overviewData[state.lottery];
+  if (!activeDraws.length) return;
   const activeLatest = activeDraws[activeDraws.length - 1];
-  $('#overview-pl3-latest').textContent = drawDigits(pl3Latest, 3).join(' ');
-  $('#overview-pl3-issue').textContent = `${pl3Latest.issue}期 · ${pl3Latest.kjdate}`;
-  $('#overview-pl5-latest').textContent = drawDigits(pl5Latest, 5).join(' ');
-  $('#overview-pl5-issue').textContent = `${pl5Latest.issue}期 · ${pl5Latest.kjdate}`;
-  $('#overview-kl8-latest').textContent = kl8Numbers(kl8Latest).slice(0, 5).map((number) => String(number).padStart(2, '0')).join(' ');
-  $('#overview-kl8-issue').textContent = `${kl8Latest.issue}期 · ${kl8Latest.kjdate}`;
+  if (pl3.length) {
+    const latest = pl3[pl3.length - 1];
+    $('#overview-pl3-latest').textContent = drawDigits(latest, 3).join(' ');
+    $('#overview-pl3-issue').textContent = `${latest.issue}期 · ${latest.kjdate}`;
+  }
+  if (pl5.length) {
+    const latest = pl5[pl5.length - 1];
+    $('#overview-pl5-latest').textContent = drawDigits(latest, 5).join(' ');
+    $('#overview-pl5-issue').textContent = `${latest.issue}期 · ${latest.kjdate}`;
+  }
+  if (kl8.length) {
+    const latest = kl8[kl8.length - 1];
+    $('#overview-kl8-latest').textContent = kl8Numbers(latest).slice(0, 5).map((number) => String(number).padStart(2, '0')).join(' ');
+    $('#overview-kl8-issue').textContent = `${latest.issue}期 · ${latest.kjdate}`;
+  }
   $('#overview-pl3-latest').closest('div').classList.toggle('active', state.lottery === 'pl3');
   $('#overview-pl5-latest').closest('div').classList.toggle('active', state.lottery === 'pl5');
   $('#overview-kl8-latest').closest('div').classList.toggle('active', state.lottery === 'kl8');
@@ -1283,20 +1292,33 @@ function renderOverview() {
     renderKl8Overview(kl8);
     return;
   }
+  if (state.view !== 'overview') return;
   $('#open-pl3-route').textContent = state.lottery === 'pl3' ? '查看012直选图' : '查看012走势图';
-  buildDailyOverview(activeDraws, state.lottery);
-  if (state.lottery === 'pl3') renderPl3OverviewFocus(pl3);
-  else renderPl5OverviewFocus(pl5);
+  const key = `${state.lottery}:${activeLatest.issue}`;
+  if (overviewAnalysisKey === key) return;
+  overviewAnalysisKey = key;
+  if (overviewAnalysisTimer) clearTimeout(overviewAnalysisTimer);
+  requestAnimationFrame(() => {
+    overviewAnalysisTimer = setTimeout(() => {
+      if (state.view !== 'overview' || `${state.lottery}:${overviewData[state.lottery].at(-1)?.issue || ''}` !== key) {
+        overviewAnalysisKey = '';
+        return;
+      }
+      buildDailyOverview(activeDraws, state.lottery);
+      if (state.lottery === 'pl3') renderPl3OverviewFocus(activeDraws);
+      else renderPl5OverviewFocus(activeDraws);
+    }, 16);
+  });
 }
 
 async function loadOverviewData(refresh = false) {
-  const missing = ['pl3', 'pl5', 'kl8'].filter((lottery) => refresh || !overviewData[lottery].length);
-  await Promise.all([...missing.map(async (lottery) => {
+  renderOverview();
+  const missing = ['pl3', 'pl5', 'kl8'].filter((lottery) => lottery !== state.lottery && (refresh || !overviewData[lottery].length));
+  missing.forEach(async (lottery) => {
     const response = await fetch(`/api/draws?lottery=${lottery}&limit=10000${refresh ? '&refresh=1' : ''}`);
     const result = await response.json();
     overviewData[lottery] = result.data;
-  }), loadReviewAdaptation(state.lottery)]);
-  renderOverview();
+  });
 }
 
 function generateRecommendation() {
@@ -1718,6 +1740,7 @@ function showView(view) {
   $('.shell').style.gridTemplateColumns = view === 'trend' ? '190px minmax(0, 1fr)' : '1fr';
   $('.toolbar').style.display = view === 'trend' ? '' : 'none';
   $('.summary-strip').style.display = view === 'trend' ? '' : 'none';
+  if (view === 'trend' && state.draws.length) renderTrend();
   if (view === 'overview') renderOverview();
   if (view === 'recommend') generateRecommendation();
   if (view === 'review') renderReview();
@@ -1763,7 +1786,7 @@ async function loadData(refresh = false) {
     const latest = state.draws[state.draws.length - 1];
     $('#latest-number').textContent = isHappy8() ? kl8Numbers(latest).slice(0, 5).map((number) => String(number).padStart(2, '0')).join(' ') : digits(latest).join(' ');
     $('#latest-issue').textContent = `${latest.issue}期 · ${latest.kjdate}`;
-    if (!isHappy8()) { renderTrend(); generateRecommendation(); }
+    if (!isHappy8() && state.view === 'trend') renderTrend();
     renderOverview();
     if (state.view === 'selector') renderSelector();
     if (refresh) toast('开奖数据已刷新');
