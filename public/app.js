@@ -2,6 +2,7 @@ const state = { lottery: 'pl5', draws: [], periods: 50, mode: 'position', lines:
 const overviewData = { pl3: [], pl5: [], kl8: [] };
 const lotteryTotals = { pl3: 0, pl5: 0, kl8: 0 };
 const fullHistoryPromises = { pl3: null, pl5: null, kl8: null };
+const scheduledCalibrations = new Set();
 let overviewAnalysisTimer = null;
 let overviewAnalysisKey = '';
 const overviewRecommendations = { pl3: { wide: [], narrow: [], singles: [] }, pl5: { wide: [], narrow: [] }, kl8: { ten: [], twelve: [] } };
@@ -91,6 +92,40 @@ function persistDrawCache(lottery, draws, total) {
   } catch (_) {
     // A full browser storage area should never prevent live data from rendering.
   }
+}
+
+function preferNewestDraws(current, incoming) {
+  if (!current.length) return incoming;
+  if (!incoming.length) return current;
+  const currentIssue = String(current.at(-1).issue);
+  const incomingIssue = String(incoming.at(-1).issue);
+  return incomingIssue.localeCompare(currentIssue, undefined, { numeric: true }) >= 0 ? incoming : current;
+}
+
+function mergeDrawSets(current, incoming) {
+  const merged = new Map(incoming.map((draw) => [String(draw.issue), draw]));
+  current.forEach((draw) => merged.set(String(draw.issue), draw));
+  return [...merged.values()].sort((a, b) => String(a.issue).localeCompare(String(b.issue), undefined, { numeric: true }));
+}
+
+function scheduleLotteryCalibration(lottery) {
+  if (lottery !== 'pl5' || scheduledCalibrations.has(lottery)) return;
+  scheduledCalibrations.add(lottery);
+  setTimeout(async () => {
+    try {
+      const response = await fetch(`/api/draws?lottery=${lottery}&limit=${BOOTSTRAP_LIMIT}&calibrate=${Date.now()}`);
+      const result = await response.json();
+      overviewData[lottery] = preferNewestDraws(overviewData[lottery], result.data);
+      lotteryTotals[lottery] = Math.max(lotteryTotals[lottery], result.total);
+      persistDrawCache(lottery, overviewData[lottery], lotteryTotals[lottery]);
+      if (state.lottery === lottery) {
+        state.draws = overviewData[lottery];
+        updateActiveLotteryUi();
+      }
+    } catch (_) {
+      // The already-rendered cache remains usable when background calibration fails.
+    }
+  }, 5000);
 }
 
 function refreshLotteryConfig() {
@@ -1443,9 +1478,9 @@ async function loadOverviewData(refresh = false) {
     try {
       const response = await fetch(`/api/draws?lottery=${lottery}&limit=${BOOTSTRAP_LIMIT}${refresh ? '&refresh=1' : ''}`);
       const result = await response.json();
-      overviewData[lottery] = result.data;
-      lotteryTotals[lottery] = result.total;
-      persistDrawCache(lottery, result.data, result.total);
+      overviewData[lottery] = preferNewestDraws(overviewData[lottery], result.data);
+      lotteryTotals[lottery] = Math.max(lotteryTotals[lottery], result.total);
+      persistDrawCache(lottery, overviewData[lottery], lotteryTotals[lottery]);
     } catch (_) {
       // Other lotteries are prefetched opportunistically and must not delay the active one.
     }
@@ -1931,9 +1966,9 @@ async function ensureFullHistory(lottery) {
   fullHistoryPromises[lottery] = fetch(`/api/draws?lottery=${lottery}&limit=${FULL_HISTORY_LIMIT}`)
     .then((response) => response.json())
     .then((result) => {
-      overviewData[lottery] = result.data;
-      lotteryTotals[lottery] = result.total;
-      persistDrawCache(lottery, result.data, result.total);
+      overviewData[lottery] = mergeDrawSets(overviewData[lottery], result.data);
+      lotteryTotals[lottery] = Math.max(lotteryTotals[lottery], result.total, overviewData[lottery].length);
+      persistDrawCache(lottery, overviewData[lottery], lotteryTotals[lottery]);
       if (state.lottery === lottery) {
         state.draws = result.data;
         updateActiveLotteryUi();
@@ -1957,12 +1992,13 @@ async function loadData(refresh = false) {
     const adaptationPromise = loadReviewAdaptation(lottery);
     const response = await fetch(`/api/draws?lottery=${lottery}&limit=${BOOTSTRAP_LIMIT}${refresh ? '&refresh=1' : ''}`);
     const result = await response.json();
-    overviewData[lottery] = result.data;
-    lotteryTotals[lottery] = result.total;
-    persistDrawCache(lottery, result.data, result.total);
+    overviewData[lottery] = preferNewestDraws(overviewData[lottery], result.data);
+    lotteryTotals[lottery] = Math.max(lotteryTotals[lottery], result.total);
+    persistDrawCache(lottery, overviewData[lottery], lotteryTotals[lottery]);
+    if (!refresh) scheduleLotteryCalibration(lottery);
     await adaptationPromise;
     if (state.lottery === lottery) {
-      state.draws = result.data;
+      state.draws = overviewData[lottery];
       updateActiveLotteryUi();
     }
     if (refresh) toast('开奖数据已刷新');

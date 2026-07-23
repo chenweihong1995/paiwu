@@ -226,8 +226,7 @@ const server = http.createServer(async (request, response) => {
     const draws = await getDraws(lottery, url.searchParams.get('refresh') === '1');
     const limit = Math.min(10000, Math.max(20, Number(url.searchParams.get('limit') || 300)));
     const data = draws.slice(-limit).map(({ issue, kjdate, winnum }) => ({ issue, kjdate, winnum }));
-    const cacheControl = url.searchParams.get('refresh') === '1' ? 'no-store' : 'private, max-age=60, stale-while-revalidate=300';
-    sendJson(request, response, 200, { lottery, updatedAt: new Date().toISOString(), total: draws.length, data }, cacheControl);
+    sendJson(request, response, 200, { lottery, updatedAt: new Date().toISOString(), total: draws.length, data });
     return;
   }
 
