@@ -5,6 +5,7 @@ const fullHistoryPromises = { pl3: null, pl5: null, kl8: null };
 const scheduledCalibrations = new Set();
 let overviewAnalysisTimer = null;
 let overviewAnalysisKey = '';
+let pl3SingleFocusKey = '';
 const overviewRecommendations = { pl3: { wide: [], narrow: [], singles: [] }, pl5: { wide: [], narrow: [] }, kl8: { ten: [], twelve: [] } };
 const algorithmCaches = { pl3: null, pl5: null };
 const savedDailySnapshots = new Set();
@@ -1348,6 +1349,79 @@ function trendProjectionEntries(draws, lottery) {
   return [...entries.values()].sort((a, b) => a.position - b.position);
 }
 
+function pl3SingleFocusStats(draws) {
+  const stats = Array.from({ length: 1000 }, (_, number) => ({
+    number: String(number).padStart(3, '0'),
+    count: 0,
+    lastIndex: -1,
+    lastDraw: null
+  }));
+  draws.forEach((draw, index) => {
+    const number = drawDigits(draw, 3).join('');
+    const item = stats[Number(number)];
+    item.count++;
+    item.lastIndex = index;
+    item.lastDraw = draw;
+  });
+  const latestDate = new Date(`${draws.at(-1)?.kjdate || beijingDate()}T00:00:00`);
+  stats.forEach((item) => {
+    item.omit = item.lastIndex < 0 ? draws.length : draws.length - item.lastIndex - 1;
+    const lastDate = item.lastDraw?.kjdate ? new Date(`${item.lastDraw.kjdate}T00:00:00`) : null;
+    item.years = lastDate && !Number.isNaN(lastDate.getTime())
+      ? Math.max(0, (latestDate - lastDate) / (365.25 * 24 * 60 * 60 * 1000))
+      : Infinity;
+  });
+  return stats;
+}
+
+function renderPl3SingleFocus(draws) {
+  if (!draws.length || state.lottery !== 'pl3') return;
+  const key = `${draws.length}:${draws.at(-1)?.issue || ''}`;
+  if (pl3SingleFocusKey === key) return;
+  pl3SingleFocusKey = key;
+  const stats = pl3SingleFocusStats(draws);
+  const never = stats.filter((item) => item.count === 0);
+  const longMissing = stats.filter((item) => item.count > 0 && item.years >= 1)
+    .sort((a, b) => b.years - a.years || b.omit - a.omit);
+  const selected = [...never.slice(0, 6), ...longMissing]
+    .slice(0, 14);
+  if (selected.length < 14) {
+    const selectedNumbers = new Set(selected.map((item) => item.number));
+    stats.filter((item) => item.count > 0 && !selectedNumbers.has(item.number))
+      .sort((a, b) => b.omit - a.omit)
+      .slice(0, 14 - selected.length)
+      .forEach((item) => selected.push(item));
+  }
+  const maxOmit = Math.max(...stats.map((item) => item.omit));
+  $('#pl3-single-focus-meta').textContent = `${draws.length}期完整历史`;
+  $('#pl3-single-focus-summary').innerHTML = [
+    `<span>从未开出 <b>${never.length}</b> 个</span>`,
+    `<span>超过1年未出 <b>${longMissing.length}</b> 个</span>`,
+    `<span>单式最大遗漏 <b>${maxOmit}</b> 期</span>`
+  ].join('');
+  $('#pl3-single-focus-body').innerHTML = selected.map((item) => {
+    const type = item.count === 0 ? '历史未开' : item.years >= 1 ? `${item.years.toFixed(1)}年未出` : '高遗漏';
+    const last = item.lastDraw ? `${item.lastDraw.kjdate} · ${item.lastDraw.issue}期` : '发行至今未开';
+    return `<tr><td>${item.number}</td><td><span class="single-focus-tag${item.count === 0 ? ' never' : ''}">${type}</span></td><td>${item.omit}期</td><td>${last}</td><td>${item.count}次</td></tr>`;
+  }).join('');
+}
+
+function loadPl3SingleFocus() {
+  const panel = $('#focus-pl3-singles');
+  panel.hidden = false;
+  const hasFullHistory = lotteryTotals.pl3 && overviewData.pl3.length >= lotteryTotals.pl3;
+  if (hasFullHistory) {
+    renderPl3SingleFocus(overviewData.pl3);
+    return;
+  }
+  $('#pl3-single-focus-meta').textContent = '全历史统计';
+  $('#pl3-single-focus-summary').textContent = '正在核对完整历史...';
+  $('#pl3-single-focus-body').innerHTML = '<tr><td colspan="5">完整历史载入中...</td></tr>';
+  ensureFullHistory('pl3').then((draws) => {
+    if (state.lottery === 'pl3') renderPl3SingleFocus(draws);
+  });
+}
+
 function renderPl3OverviewFocus(pl3) {
   $('#focus-route-title').textContent = '012直选形态';
   $('#focus-route-meta').textContent = '27种';
@@ -1377,9 +1451,11 @@ function renderPl3OverviewFocus(pl3) {
   $('#focus-pl5').classList.remove('horizontal');
   $('#focus-pl5').classList.add('line-observation');
   $('#focus-pl5').innerHTML = pl3MotifBoardMarkup(pl3);
+  loadPl3SingleFocus();
 }
 
 function renderPl5OverviewFocus(pl5) {
+  $('#focus-pl3-singles').hidden = true;
   $('#focus-route-title').textContent = '012直选形态';
   $('#focus-route-meta').textContent = '243种';
   $('#focus-position-meta').textContent = '万千百十个';

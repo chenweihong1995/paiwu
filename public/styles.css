@@ -108,6 +108,18 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .focus-observation b { display: block; color: #34434e; font-size: 12px; }
 .focus-observation span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; letter-spacing: 0; overflow-wrap: anywhere; }
 .focus-list.line-observation { padding: 10px 12px 8px; }
+.single-focus { min-height: 0; }
+.single-focus-summary { padding: 9px 12px; display: flex; gap: 16px; border-bottom: 1px solid #e8edef; background: #fbfcfc; color: #586873; font-size: 10px; }
+.single-focus-summary b { color: #2f404b; font-size: 11px; }
+.single-focus-table-wrap { overflow-x: auto; }
+.single-focus table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.single-focus th, .single-focus td { height: 34px; padding: 0 10px; font-size: 10px; text-align: left; }
+.single-focus th { background: #f7f9fa; color: #6c7a83; font-weight: 600; }
+.single-focus td:first-child { color: var(--red); font-size: 14px; font-weight: 800; letter-spacing: 1px; }
+.single-focus td:nth-child(3), .single-focus td:last-child { font-variant-numeric: tabular-nums; }
+.single-focus-tag { display: inline-block; padding: 2px 5px; border: 1px solid #d3dce1; border-radius: 3px; color: #4d5e69; background: #f8fafb; }
+.single-focus-tag.never { border-color: #e1b3ad; color: #b74337; background: #fff7f5; }
+.single-focus-note { margin: 0; padding: 8px 12px 10px; color: #82909a; font-size: 10px; }
 .pl3-motif-board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .motif-card { min-width: 0; border: 1px solid #dfe5e8; background: #fbfcfc; }
 .motif-card header { height: 28px; padding: 0 8px; display: flex; align-items: center; justify-content: space-between; background: #f1f4f5; border-bottom: 1px solid #dfe5e8; }
@@ -348,6 +360,8 @@ td.number { color: var(--red); font-weight: 800; letter-spacing: 4px; }
   .focus-list.horizontal { grid-template-columns: 1fr; }
   .pl3-motif-board { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .focus-list.line-observation { padding: 8px; }
+  .single-focus-summary { flex-wrap: wrap; gap: 5px 12px; }
+  .single-focus table { min-width: 560px; }
   .overview-note { padding: 12px 14px 18px; }
   .recommend-layout { display: flex; flex-direction: column; }
   .model-controls { order: -1; padding: 16px; border-bottom: 1px solid var(--line); }
