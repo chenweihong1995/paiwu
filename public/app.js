@@ -957,14 +957,14 @@ function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount
     .catch(() => savedDailySnapshots.delete(key));
 }
 
-function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
+function buildDailyOverview(draws, lottery) {
   const isPl3 = lottery === 'pl3';
   const names = isPl3 ? ['百位', '十位', '个位'] : ['万位', '千位', '百位', '十位', '个位'];
   const wideCount = isPl3 ? 6 : 3;
   const narrowCount = isPl3 ? 3 : 2;
   const backtest = createBacktest(draws, lottery);
   const narrowPlan = selectBacktestedPlan(backtest, narrowCount);
-  const widePlan = createExpandedPlan(backtest, narrowPlan, wideCount, isPl3 ? requiredWidePlan : null);
+  const widePlan = createExpandedPlan(backtest, narrowPlan, wideCount);
   overviewRecommendations[lottery].wide = widePlan.picks;
   overviewRecommendations[lottery].narrow = narrowPlan.picks;
   const singleTickets = isPl3 ? pl3SingleTickets(narrowPlan) : [];
@@ -980,7 +980,7 @@ function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
   $('#daily-narrow-title').textContent = `${narrowCount}码直选复式`;
   $('#daily-six').textContent = widePlan.picks.map((list) => list.join('')).join('-');
   $('#daily-three').textContent = narrowPlan.picks.map((list) => list.join('')).join('-');
-  $('#daily-six-note').textContent = `整注命中 ${(widePlan.validationRate * 100).toFixed(1)}% · 分位覆盖 ${(widePlan.validationPositionRate * 100).toFixed(1)}% · 理论 ${(widePlan.baseline * 100).toFixed(1)}%${widePlan.alignedWithPl5 ? ' · 已包含排五前三位3码' : ''}`;
+  $('#daily-six-note').textContent = `整注命中 ${(widePlan.validationRate * 100).toFixed(1)}% · 分位覆盖 ${(widePlan.validationPositionRate * 100).toFixed(1)}% · 理论 ${(widePlan.baseline * 100).toFixed(1)}%`;
   $('#daily-three-note').textContent = `整注命中 ${(narrowPlan.validationRate * 100).toFixed(1)}% · 分位覆盖 ${(narrowPlan.validationPositionRate * 100).toFixed(1)}% · 理论 ${(narrowPlan.baseline * 100).toFixed(1)}%`;
   $('#daily-six-meta').textContent = `命中${widePlan.validationHits}/${widePlan.validationSize}期 · ${wideBets * 2}元`;
   $('#daily-three-meta').textContent = `命中${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${narrowBets * 2}元`;
@@ -988,9 +988,7 @@ function buildDailyOverview(draws, lottery, requiredWidePlan = null) {
   $('#algorithm-hit-rate').textContent = `整注命中率：${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${(narrowPlan.validationRate * 100).toFixed(1)}%`;
   $('#algorithm-position-rate').textContent = `分位覆盖率：${(narrowPlan.validationPositionRate * 100).toFixed(1)}% · 理论 ${((narrowCount / 10) * 100).toFixed(1)}%`;
   $('#algorithm-three-models').textContent = `${narrowCount}码：${names.map((name, position) => `${name.slice(0, 1)}${narrowPlan.modelNames[position]}`).join(' / ')}`;
-  $('#algorithm-six-models').textContent = widePlan.alignedWithPl5
-    ? '6码：排三3码核心 + 排五前三位3码 + 同模型补足'
-    : `${wideCount}码：${names.map((name, position) => `${name.slice(0, 1)}${widePlan.modelNames[position]}`).join(' / ')}`;
+  $('#algorithm-six-models').textContent = `${wideCount}码：${names.map((name, position) => `${name.slice(0, 1)}${widePlan.modelNames[position]}`).join(' / ')}`;
 
   if (isPl3) {
     const group3 = aggregate.slice(0, 2).map((item) => item.digit);
@@ -1059,14 +1057,42 @@ function pl5WideFocus(draws) {
   return [...pl5Distribution, ...pl5Positions];
 }
 
-function renderPl3OverviewFocus(pl3, pl5) {
+function pl3HumanObservations(draws) {
+  const recent = draws.slice(-6);
+  const names = ['百位', '十位', '个位'];
+  const positionNotes = names.map((name, position) => {
+    const values = recent.map((draw) => drawDigits(draw, 3)[position]);
+    const diffs = values.slice(1).map((value, index) => value - values[index]);
+    const latestDiffs = diffs.slice(-3);
+    const rising = latestDiffs.length === 3 && latestDiffs.every((diff) => diff === 1);
+    const falling = latestDiffs.length === 3 && latestDiffs.every((diff) => diff === -1);
+    const alternating = latestDiffs.length === 3 && latestDiffs.every((diff, index) => index === 0 || Math.sign(diff) !== Math.sign(latestDiffs[index - 1]));
+    const state = rising ? '连续斜升' : falling ? '连续斜降' : alternating ? '折线交替' : '近6期轨迹';
+    return `<div class="focus-observation"><b>${name}${state}</b><span>${values.join(' → ')}</span></div>`;
+  });
+  const latest = drawDigits(draws[draws.length - 1], 3);
+  const previous = drawDigits(draws[draws.length - 2], 3);
+  const repeated = latest.filter((digit) => previous.includes(digit));
+  const sorted = [...latest].sort((a, b) => a - b);
+  const adjacent = sorted.filter((digit, index) => index && digit - sorted[index - 1] === 1);
+  const totals = recent.map((draw) => sum(drawDigits(draw, 3)));
+  const spans = recent.map((draw) => { const values = drawDigits(draw, 3); return Math.max(...values) - Math.min(...values); });
+  const routes = recent.slice(-4).map((draw) => drawDigits(draw, 3).map((digit) => digit % 3).join('')).join(' → ');
+  return [...positionNotes,
+    `<div class="focus-observation"><b>重号 / 邻号</b><span>与上期重号：${repeated.length ? repeated.join('、') : '无'}；本期邻号：${adjacent.length ? '有' : '无'}</span></div>`,
+    `<div class="focus-observation"><b>和值 / 跨度节奏</b><span>和值 ${totals.join(' → ')}；跨度 ${spans.join(' → ')}</span></div>`,
+    `<div class="focus-observation"><b>近4期012路</b><span>${routes}</span></div>`
+  ].join('');
+}
+
+function renderPl3OverviewFocus(pl3) {
   $('#focus-route-title').textContent = '012直选形态';
   $('#focus-route-meta').textContent = '27种';
   $('#focus-position-meta').textContent = '百十个';
   $('#focus-group-title').textContent = '组三组六形态';
   $('#focus-group-meta').textContent = '组选';
-  $('#focus-wide-title').textContent = '排列五012分布与定位关注';
-  $('#focus-wide-meta').textContent = '同步观察';
+  $('#focus-wide-title').textContent = '近期开奖人眼走势观察';
+  $('#focus-wide-meta').textContent = '只作记录';
   const directFocus = rankedOmissions(pl3, directRoutes, (draw) => drawDigits(draw, 3).map((digit) => digit % 3).join(''), 5)
     .map((item) => ({ ...item, label: `${item.label}路` }));
   $('#focus-route').innerHTML = focusRows(directFocus);
@@ -1085,7 +1111,7 @@ function renderPl3OverviewFocus(pl3, pl5) {
   const groupFocus = rankedOmissions(pl3, ['豹子', '组三', '组六'], (draw) => ['', '豹子', '组三', '组六'][new Set(drawDigits(draw, 3)).size], 3);
   const tailFocus = rankedOmissions(pl3, Array.from({ length: 10 }, (_, value) => value), (draw) => sum(drawDigits(draw, 3)) % 10, 2).map((item) => ({ ...item, label: `和尾 ${item.label}` }));
   $('#focus-group-type').innerHTML = focusRows([...groupFocus, ...tailFocus]);
-  $('#focus-pl5').innerHTML = focusRows(pl5WideFocus(pl5));
+  $('#focus-pl5').innerHTML = pl3HumanObservations(pl3);
 }
 
 function renderPl5OverviewFocus(pl5) {
@@ -1137,6 +1163,10 @@ function renderOverview() {
   $('#overview-pl3-latest').closest('div').classList.toggle('active', state.lottery === 'pl3');
   $('#overview-pl5-latest').closest('div').classList.toggle('active', state.lottery === 'pl5');
   $('#overview-kl8-latest').closest('div').classList.toggle('active', state.lottery === 'kl8');
+  $('#overview-pl3-card').hidden = state.lottery !== 'pl3';
+  $('#overview-pl5-card').hidden = state.lottery !== 'pl5';
+  $('#overview-kl8-card').hidden = state.lottery !== 'kl8';
+  $('.overview-latest').classList.add('single-latest');
   $('#overview-title').textContent = `${lotteryName()}今日研判`;
   $('#overview-lottery-badge').textContent = lotteryName();
   $('#overview-date').textContent = `${new Date().toISOString().slice(0, 10)} · 数据更新至${activeLatest.issue}期 · 每日方案已固定`;
@@ -1148,9 +1178,8 @@ function renderOverview() {
     return;
   }
   $('#open-pl3-route').textContent = state.lottery === 'pl3' ? '查看012直选图' : '查看012走势图';
-  const requiredWidePlan = state.lottery === 'pl3' ? pl5FrontWidePlan(pl5) : null;
-  buildDailyOverview(activeDraws, state.lottery, requiredWidePlan);
-  if (state.lottery === 'pl3') renderPl3OverviewFocus(pl3, pl5);
+  buildDailyOverview(activeDraws, state.lottery);
+  if (state.lottery === 'pl3') renderPl3OverviewFocus(pl3);
   else renderPl5OverviewFocus(pl5);
 }
 

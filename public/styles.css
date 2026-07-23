@@ -67,6 +67,7 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .overview-head h1 { font-size: 24px; }
 .overview-head p { margin-top: 3px; color: var(--muted); font-size: 12px; }
 .overview-latest { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); border: 1px solid var(--line); background: var(--line); gap: 1px; }
+.overview-latest.single-latest { grid-template-columns: minmax(190px, 1fr); }
 .overview-latest > div { min-width: 180px; padding: 10px 14px; background: #fafbfb; }
 .overview-latest > div.active { box-shadow: inset 0 3px 0 #f2a33a; background: #fffaf0; }
 .overview-latest span, .overview-latest small { display: block; color: var(--muted); font-size: 10px; }
@@ -102,6 +103,10 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .focus-group header span { color: var(--muted); font-size: 10px; }
 .focus-list { padding: 4px 12px 8px; }
 .focus-list.horizontal { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0 18px; }
+.focus-observation { min-height: 44px; padding: 8px 0; border-bottom: 1px solid #edf0f2; }
+.focus-observation:last-child { border-bottom: 0; }
+.focus-observation b { display: block; color: #34434e; font-size: 12px; }
+.focus-observation span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; letter-spacing: 0; overflow-wrap: anywhere; }
 .focus-row { min-height: 29px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #edf0f2; }
 .focus-row:last-child { border-bottom: 0; }
 .focus-row b { color: #34434e; font-size: 12px; }
