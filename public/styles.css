@@ -310,6 +310,16 @@ td.number { color: var(--red); font-weight: 800; letter-spacing: 4px; }
 #toast { position: fixed; right: 22px; bottom: 22px; z-index: 20; padding: 10px 14px; background: #26333c; color: white; border-radius: 4px; opacity: 0; transform: translateY(8px); transition: .2s; pointer-events: none; }
 #toast.show { opacity: 1; transform: translateY(0); }
 @media (max-width: 1180px) {
+  .topbar { height: auto; min-height: 112px; grid-template-columns: 1fr auto; padding: 10px 14px 0; }
+  .brand { gap: 7px; min-width: 0; white-space: nowrap; }
+  .brand strong { font-size: 15px; }
+  .brand > div:nth-child(2) { min-width: 0; }
+  .lottery-switch { margin-left: 2px; }
+  .lottery-switch button { padding: 0 6px; }
+  .latest-mini { font-size: 11px; }
+  .latest-mini strong { font-size: 17px; }
+  .topnav { grid-column: 1 / -1; order: 3; height: 44px; justify-content: stretch; min-width: 0; }
+  .nav-item { min-width: 0; flex: 1; padding: 0 6px; font-size: 12px; }
   .summary-strip { grid-template-columns: repeat(3, 1fr); }
   .chart-wrap { height: calc(100vh - 316px); }
   .selector-toolbar { grid-template-columns: 1fr; gap: 10px; }
