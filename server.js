@@ -269,7 +269,7 @@ function settleRecommendationHistory(history, drawsByLottery) {
 }
 
 function reviewAdaptation(history, lottery) {
-  const settled = history.filter((entry) => entry.lottery === lottery && entry.status === 'settled');
+  const settled = history.filter((entry) => entry.lottery === lottery && entry.status === 'settled' && !entry.replay);
   const observations = settled.flatMap((entry) => entry.recommendations.map((recommendation) => {
     const result = entry.outcome?.results?.find((item) => item.key === recommendation.key);
     if (!result || ['tickets', 'group6'].includes(recommendation.type)) return null;

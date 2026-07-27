@@ -881,11 +881,11 @@ function kl8Plan(draws, count) {
   };
 }
 
-function saveKl8DailyRecommendation(draws, tenPlan, twelvePlan) {
+function saveKl8DailyRecommendation(draws, tenPlan, twelvePlan, replay = false) {
   const latest = draws[draws.length - 1];
   if (!latest) return;
   const key = `kl8-${latest.issue}`;
-  if (savedDailySnapshots.has(key)) return;
+  if (savedDailySnapshots.has(key)) return Promise.resolve();
   savedDailySnapshots.add(key);
   const snapshotPlan = (keyName, label, plan) => ({
     key: keyName, label, type: 'set', picks: plan.picks.map((number) => String(number).padStart(2, '0')),
@@ -895,10 +895,10 @@ function saveKl8DailyRecommendation(draws, tenPlan, twelvePlan) {
   const snapshot = {
     id: key, lottery: 'kl8', date: latest.kjdate, sourceIssue: String(latest.issue), sourceDate: latest.kjdate,
     createdAt: new Date().toISOString(), modelVersion: 'kl8-short-cycle-30-50-100-v1', recentWindows: RECENT_WINDOWS,
-    recommendations: [snapshotPlan('ten', '选十推荐', tenPlan), snapshotPlan('twelve', '选十二备选', twelvePlan)], status: 'pending', outcome: null
+    recommendations: [snapshotPlan('ten', '选十推荐', tenPlan), snapshotPlan('twelve', '选十二备选', twelvePlan)], status: 'pending', outcome: null, replay
   };
   saveLocalReviewEntry(snapshot);
-  fetch('/api/recommendations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot) })
+  return fetch('/api/recommendations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot) })
     .then((response) => { if (!response.ok) throw new Error('snapshot save failed'); })
     .catch(() => savedDailySnapshots.delete(key));
 }
@@ -1011,11 +1011,11 @@ async function loadReviewAdaptation(lottery) {
   }
 }
 
-function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount, singleTickets = [], groupTickets = {}) {
+function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount, singleTickets = [], groupTickets = {}, replay = false) {
   const latest = draws[draws.length - 1];
   if (!latest) return;
   const key = `${lottery}-${latest.issue}`;
-  if (savedDailySnapshots.has(key)) return;
+  if (savedDailySnapshots.has(key)) return Promise.resolve();
   savedDailySnapshots.add(key);
   const positionCount = lottery === 'pl3' ? 3 : 5;
   const snapshot = {
@@ -1038,13 +1038,55 @@ function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount
   snapshot.id = `${lottery}-${snapshot.sourceIssue}`;
   snapshot.status = 'pending';
   snapshot.outcome = null;
+  snapshot.replay = replay;
   saveLocalReviewEntry(snapshot);
-  fetch('/api/recommendations', {
+  return fetch('/api/recommendations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(snapshot)
   }).then((response) => { if (!response.ok) throw new Error('snapshot save failed'); })
     .catch(() => savedDailySnapshots.delete(key));
+}
+
+function archivedRecommendationPlans(draws, lottery) {
+  const isPl3 = lottery === 'pl3';
+  const positionCount = isPl3 ? 3 : 5;
+  const wideCount = isPl3 ? 6 : 3;
+  const narrowCount = isPl3 ? 3 : 2;
+  const backtest = createBacktest(draws, lottery);
+  const narrowPlan = selectBacktestedPlan(backtest, narrowCount);
+  const widePlan = createExpandedPlan(backtest, narrowPlan, wideCount);
+  const singleTickets = isPl3 ? pl3SingleTickets(narrowPlan) : [];
+  let groupTickets = {};
+  if (isPl3) {
+    const aggregate = Array.from({ length: 10 }, (_, digit) => ({
+      digit,
+      score: narrowPlan.rankings.reduce((total, ranking) => total + (10 - ranking.indexOf(digit)), 0)
+    })).sort((a, b) => b.score - a.score || a.digit - b.digit);
+    const group3 = aggregate.slice(0, 2).map((item) => item.digit);
+    const [a, b] = group3;
+    groupTickets = {
+      group3: [`${a}${a}${b}`, `${a}${b}${a}`, `${b}${a}${a}`, `${a}${b}${b}`, `${b}${a}${b}`, `${b}${b}${a}`],
+      group6: balancedTop(aggregate, 6)
+    };
+  }
+  return { widePlan, narrowPlan, wideCount, narrowCount, singleTickets, groupTickets, positionCount };
+}
+
+async function backfillPreviousReview(lottery) {
+  if (state.lottery !== lottery || state.draws.length < MODEL_LOOKBACK + 2) return;
+  const sourceDraws = state.draws.slice(0, -1);
+  const sourceIssue = String(sourceDraws.at(-1)?.issue || '');
+  if (!sourceIssue || readLocalReviewHistory().some((entry) => entry.lottery === lottery && String(entry.sourceIssue) === sourceIssue)) return;
+  if (lottery === 'kl8') {
+    await saveKl8DailyRecommendation(sourceDraws, kl8Plan(sourceDraws, 10), kl8Plan(sourceDraws, 12), true);
+    return;
+  }
+  const plans = archivedRecommendationPlans(sourceDraws, lottery);
+  await saveDailyRecommendation(
+    sourceDraws, lottery, plans.widePlan, plans.narrowPlan, plans.wideCount, plans.narrowCount,
+    plans.singleTickets, plans.groupTickets, true
+  );
 }
 
 function buildDailyOverview(draws, lottery) {
@@ -1591,7 +1633,7 @@ function renderHistory(query = '') {
 }
 
 function reviewDirection(entries) {
-  const settled = entries.filter((entry) => entry.status === 'settled');
+  const settled = entries.filter((entry) => entry.status === 'settled' && !entry.replay);
   if (!settled.length) return '尚未有已开奖的推荐，下一期开奖后会自动生成第一条复盘。';
   const observations = settled.flatMap((entry) => entry.recommendations.map((recommendation) => {
     const outcome = entry.outcome?.results?.find((result) => result.key === recommendation.key);
@@ -1644,7 +1686,7 @@ function renderReviewRows(entries) {
         else if (recommendation.type === 'group6') verdict = `<div class="review-status ${outcome.fullHit ? 'hit' : 'miss'}">${outcome.fullHit ? '组选命中' : '未中'}<small>六码命中 ${outcome.positionHitCount}/6 · ${(outcome.positionHitCount / 6 * 100).toFixed(1)}%</small></div>`;
         else verdict = `<div class="review-status ${outcome.fullHit ? 'hit' : 'miss'}">${outcome.fullHit ? '整注命中' : '未中'}<small>分位命中 ${outcome.positionHitCount}/${recommendation.positionCount} · ${(outcome.positionHitCount / recommendation.positionCount * 100).toFixed(1)}%</small></div>`;
       }
-      const shared = index === 0 ? `<td rowspan="${recommendations.length}">${entry.sourceDate || entry.date}</td><td rowspan="${recommendations.length}">${labelOf(entry.lottery)}</td><td rowspan="${recommendations.length}">${entry.sourceIssue}期<br><small>${entry.sourceDate}</small></td>` : '';
+      const shared = index === 0 ? `<td rowspan="${recommendations.length}">${entry.sourceDate || entry.date}${entry.replay ? '<br><small>补档回放</small>' : ''}</td><td rowspan="${recommendations.length}">${labelOf(entry.lottery)}</td><td rowspan="${recommendations.length}">${entry.sourceIssue}期<br><small>${entry.sourceDate}</small></td>` : '';
       const resultShared = index === 0 ? `<td rowspan="${recommendations.length}">${actualCell}</td>` : '';
       return `<tr class="review-play-row">${shared}<td class="review-play"><strong>${recommendation.label}</strong><small>${recommendation.cost ? `${recommendation.cost}元` : '统计参考'}</small></td><td class="review-code">${code}</td><td class="review-validation">${validation}</td>${resultShared}<td>${verdict}</td></tr>`;
     });
@@ -1655,6 +1697,7 @@ function renderReviewRows(entries) {
 async function renderReview() {
   $('#review-summary').textContent = '正在核对历史推荐与最新开奖...';
   try {
+    await backfillPreviousReview(state.lottery);
     await syncReviewEntries(state.lottery);
     const response = await fetch(`/api/recommendations?lottery=${state.lottery}&refresh=1`);
     const result = await response.json();
