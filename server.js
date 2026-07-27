@@ -269,22 +269,30 @@ function settleRecommendationHistory(history, drawsByLottery) {
 }
 
 function reviewAdaptation(history, lottery) {
-  const settled = history.filter((entry) => entry.lottery === lottery && entry.status === 'settled' && !entry.replay);
-  const observations = settled.flatMap((entry) => entry.recommendations.map((recommendation) => {
-    const result = entry.outcome?.results?.find((item) => item.key === recommendation.key);
-    if (!result || ['tickets', 'group6'].includes(recommendation.type)) return null;
-    const actual = result.positionHitCount / recommendation.positionCount;
-    const expected = recommendation.type === 'set' ? recommendation.picks.length / 80
-      : recommendation.picks.reduce((total, picks) => total + picks.length / 10, 0) / recommendation.positionCount;
-    return { actual, expected };
-  }).filter(Boolean));
+  const dayScores = history.filter((entry) => entry.lottery === lottery && entry.status === 'settled')
+    .sort((a, b) => Number(a.sourceIssue) - Number(b.sourceIssue))
+    .map((entry) => {
+      const observations = entry.recommendations.map((recommendation) => {
+        const result = entry.outcome?.results?.find((item) => item.key === recommendation.key);
+        if (!result || ['tickets', 'group6'].includes(recommendation.type)) return null;
+        const actual = result.positionHitCount / recommendation.positionCount;
+        const expected = recommendation.type === 'set' ? recommendation.picks.length / 80
+          : recommendation.picks.reduce((total, picks) => total + picks.length / 10, 0) / recommendation.positionCount;
+        return { actual, expected };
+      }).filter(Boolean);
+      if (!observations.length) return null;
+      return {
+        actual: observations.reduce((total, item) => total + item.actual, 0) / observations.length,
+        expected: observations.reduce((total, item) => total + item.expected, 0) / observations.length
+      };
+    }).filter(Boolean);
   const base = [.45, .35, .2];
-  if (observations.length < 5) return { weights: base, sampleSize: observations.length, direction: '样本不足5档，保持基础权重' };
-  const recent = observations.slice(-Math.min(5, observations.length));
+  if (dayScores.length < 5) return { weights: base, sampleSize: dayScores.length, direction: '样本不足5天，保持基础权重' };
+  const recent = dayScores.slice(-5);
   const delta = recent.reduce((total, item) => total + item.actual - item.expected, 0) / recent.length;
-  if (delta <= -.04) return { weights: [.3, .35, .35], sampleSize: observations.length, direction: '近期覆盖偏低，降低30期权重并提高100期权重' };
-  if (delta >= .04) return { weights: [.55, .3, .15], sampleSize: observations.length, direction: '近期覆盖偏高，适度提高30期权重' };
-  return { weights: base, sampleSize: observations.length, direction: '近期覆盖接近理论，保持基础权重' };
+  if (delta <= -.04) return { weights: [.3, .35, .35], sampleSize: dayScores.length, direction: '近5天覆盖偏低，降低30期权重并提高100期权重' };
+  if (delta >= .04) return { weights: [.55, .3, .15], sampleSize: dayScores.length, direction: '近5天覆盖偏高，适度提高30期权重' };
+  return { weights: base, sampleSize: dayScores.length, direction: '近5天覆盖接近理论，保持基础权重' };
 }
 
 const server = http.createServer(async (request, response) => {

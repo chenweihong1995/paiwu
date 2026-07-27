@@ -1633,7 +1633,8 @@ function renderHistory(query = '') {
 }
 
 function reviewDirection(entries) {
-  const settled = entries.filter((entry) => entry.status === 'settled' && !entry.replay);
+  const settled = entries.filter((entry) => entry.status === 'settled')
+    .sort((a, b) => Number(a.sourceIssue) - Number(b.sourceIssue));
   if (!settled.length) return '尚未有已开奖的推荐，下一期开奖后会自动生成第一条复盘。';
   const observations = settled.flatMap((entry) => entry.recommendations.map((recommendation) => {
     const outcome = entry.outcome?.results?.find((result) => result.key === recommendation.key);
@@ -1647,10 +1648,28 @@ function reviewDirection(entries) {
   const expected = observations.reduce((total, item) => total + item.expectedRate, 0) / observations.length;
   const fullHits = observations.filter((item) => item.fullHit).length;
   const prefix = `已结算${settled.length}天，${observations.length}档方案；整注命中${fullHits}档，分位覆盖${(actual * 100).toFixed(1)}%，理论${(expected * 100).toFixed(1)}%。`;
-  if (settled.length < 10) return `${prefix} 样本不足10天，暂不自动改权重。`;
-  if (actual < expected - .04) return `${prefix} 覆盖低于理论4个百分点以上，复盘时优先降低短期动量和遗漏信号的权重。`;
-  if (actual > expected + .04) return `${prefix} 覆盖高于理论4个百分点以上，保留当前30/50期偏重，并继续观察。`;
-  return `${prefix} 覆盖接近理论值，暂不因单日结果调整模型，继续累积样本。`;
+  if (settled.length < 5) return `${prefix} 样本不足5天，保持基础权重。`;
+  const recentDays = settled.slice(-5);
+  const recentScores = recentDays.map((entry) => {
+    const daily = entry.recommendations.map((recommendation) => {
+      const outcome = entry.outcome?.results?.find((result) => result.key === recommendation.key);
+      if (!outcome || ['tickets', 'group6'].includes(recommendation.type)) return null;
+      const actualRate = outcome.positionHitCount / recommendation.positionCount;
+      const expectedRate = recommendation.type === 'set' ? recommendation.picks.length / 80
+        : recommendation.picks.reduce((total, picks) => total + picks.length / 10, 0) / recommendation.positionCount;
+      return { actualRate, expectedRate };
+    }).filter(Boolean);
+    if (!daily.length) return null;
+    return {
+      actualRate: daily.reduce((total, item) => total + item.actualRate, 0) / daily.length,
+      expectedRate: daily.reduce((total, item) => total + item.expectedRate, 0) / daily.length
+    };
+  }).filter(Boolean);
+  if (!recentScores.length) return `${prefix} 暂无可用于调整的定位复式复盘数据，保持基础权重。`;
+  const delta = recentScores.reduce((total, item) => total + item.actualRate - item.expectedRate, 0) / recentScores.length;
+  if (delta <= -.04) return `${prefix} 近5天覆盖低于理论4个百分点以上，已降低30期权重并提高100期权重。`;
+  if (delta >= .04) return `${prefix} 近5天覆盖高于理论4个百分点以上，已提高30期权重。`;
+  return `${prefix} 近5天覆盖接近理论，保持基础权重。`;
 }
 
 function renderReviewRows(entries) {
