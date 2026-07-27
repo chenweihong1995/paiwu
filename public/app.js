@@ -754,9 +754,15 @@ function selectBacktestedPlan(backtest, count) {
   const selectedRecentWeight = selectedTrial.recentWeight;
   const strategyRecords = selectedTrial.weightedRecords;
   const trainingRecords = strategyRecords.slice(0, split);
-  const selectedStrategies = selectCandidateStrategies(
+  const candidateStrategies = selectCandidateStrategies(
     trainingRecords, backtest.positionCount, count, modelCount, selectedRecentWeight, windowWeights
   );
+  const baselinePositionRate = count / 10;
+  const selectionSamples = Math.max(1, weightValidationSize * backtest.positionCount);
+  const selectionMargin = Math.max(.01, Math.sqrt(baselinePositionRate * (1 - baselinePositionRate) / selectionSamples) * .5);
+  const validatedEdge = selectedTrial.positionRate >= baselinePositionRate + selectionMargin;
+  // A short winning streak is not enough to replace the stable fusion model.
+  const selectedStrategies = validatedEdge ? candidateStrategies : Array(backtest.positionCount).fill(equalStrategy);
   const predictionRecords = strategyRecords.map((record) => {
     const rankings = selectedStrategies.map((strategy, position) => record.candidateRankings[position][strategy]);
     return { issue: record.issue, actual: record.actual, rankings, picks: rankings.map((ranking) => ranking.slice(0, count)) };
@@ -776,6 +782,7 @@ function selectBacktestedPlan(backtest, count) {
     : strategy === recencyStrategy ? `自动融合·30/50/100期${Math.round(selectedRecentWeight * 100)}%`
       : strategy === equalStrategy ? '等权多模型融合'
         : strategy === onlineStrategy ? `在线融合·${modelDefinitions[dominantModels[position]][1]}主导` : '自动融合';
+  const metrics = planMetrics(predictionRecords, split, backtest.positionCount);
   const plan = {
     combo: selectedStrategies,
     modelNames: selectedStrategies.map(strategyName),
@@ -783,8 +790,13 @@ function selectBacktestedPlan(backtest, count) {
     rankings: selectedRankings,
     predictionRecords,
     trainSize: split,
-    ...planMetrics(predictionRecords, split, backtest.positionCount),
+    ...metrics,
     baseline: Math.pow(count / 10, backtest.positionCount),
+    baselinePositionRate,
+    validationPositionLift: metrics.validationPositionRate - baselinePositionRate,
+    strategyDecision: validatedEdge ? '验证优势保留自适应策略' : '验证优势不足，回退稳定等权融合',
+    strategySelectionRate: selectedTrial.positionRate,
+    strategySelectionMargin: selectionMargin,
     recommendationWindow: RECOMMENDATION_WINDOW,
     recentSignalWeight: selectedRecentWeight,
     weightValidationSize,
@@ -1118,9 +1130,11 @@ function buildDailyOverview(draws, lottery) {
   $('#daily-three-note').textContent = `整注命中 ${(narrowPlan.validationRate * 100).toFixed(1)}% · 分位覆盖 ${(narrowPlan.validationPositionRate * 100).toFixed(1)}% · 理论 ${(narrowPlan.baseline * 100).toFixed(1)}%${trendSummary}`;
   $('#daily-six-meta').textContent = `命中${widePlan.validationHits}/${widePlan.validationSize}期 · ${wideBets * 2}元`;
   $('#daily-three-meta').textContent = `命中${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${narrowBets * 2}元`;
-  $('#algorithm-summary').textContent = `近30/50/100期按${recentWeightLabel(lottery)}评分；${adaptiveDirections[lottery]}；近期信号权重${Math.round(narrowPlan.recentSignalWeight * 100)}%，后${narrowPlan.validationSize}期留出验证`;
-  $('#algorithm-hit-rate').textContent = `整注命中率：${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${(narrowPlan.validationRate * 100).toFixed(1)}%`;
-  $('#algorithm-position-rate').textContent = `分位覆盖率：${(narrowPlan.validationPositionRate * 100).toFixed(1)}% · 理论 ${((narrowCount / 10) * 100).toFixed(1)}%`;
+  const lift = narrowPlan.validationPositionLift * 100;
+  const liftLabel = `${lift >= 0 ? '+' : ''}${lift.toFixed(1)}个百分点`;
+  $('#algorithm-summary').textContent = `近30/50/100期按${recentWeightLabel(lottery)}评分；${adaptiveDirections[lottery]}；${narrowPlan.strategyDecision}；后${narrowPlan.validationSize}期完全留出验证`;
+  $('#algorithm-hit-rate').textContent = `留出整注准确率：${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${(narrowPlan.validationRate * 100).toFixed(1)}% · 理论 ${(narrowPlan.baseline * 100).toFixed(1)}%`;
+  $('#algorithm-position-rate').textContent = `留出分位准确率：${(narrowPlan.validationPositionRate * 100).toFixed(1)}% · 理论 ${(narrowPlan.baselinePositionRate * 100).toFixed(1)}% · ${liftLabel}`;
   $('#algorithm-three-models').textContent = `${narrowCount}码：${names.map((name, position) => `${name.slice(0, 1)}${narrowPlan.modelNames[position]}`).join(' / ')}`;
   $('#algorithm-six-models').textContent = `${wideCount}码：${names.map((name, position) => `${name.slice(0, 1)}${widePlan.modelNames[position]}`).join(' / ')}`;
 
@@ -1177,7 +1191,8 @@ function renderBacktestedRecommendation(count) {
   $('#ticket-cost').textContent = `${bets * 2}元`;
   $('#ticket-probability').textContent = `理论概率 ${(bets / (10 ** names.length) * 100).toFixed(3)}%`;
   $('#reason-list').innerHTML = names.map((name, position) => `<div class="reason-item"><strong>${name}：${plan.modelNames[position]}</strong><span>近30、50、100期综合筛选；后${plan.validationSize}期留出分位覆盖率 ${(plan.validationPositionRates[position] * 100).toFixed(1)}%。</span></div>`).join('');
-  $('#recommend-date').textContent = `近30/50/100期为主 · 近期权重${Math.round(plan.recentSignalWeight * 100)}% · 留出整注命中 ${(plan.validationRate * 100).toFixed(1)}% · 分位覆盖 ${(plan.validationPositionRate * 100).toFixed(1)}% · 理论 ${(plan.baseline * 100).toFixed(1)}%`;
+  const lift = plan.validationPositionLift * 100;
+  $('#recommend-date').textContent = `近30/50/100期为主 · ${plan.strategyDecision} · 留出整注准确率 ${(plan.validationRate * 100).toFixed(1)}%（理论 ${(plan.baseline * 100).toFixed(1)}%）· 分位 ${(plan.validationPositionRate * 100).toFixed(1)}%（${lift >= 0 ? '+' : ''}${lift.toFixed(1)}个百分点）`;
   $('.model-controls h2').textContent = '30/50/100期滚动模型';
   $('.model-badge').textContent = '独立留出验证版';
   $('#generate-button').textContent = '重新回测';
