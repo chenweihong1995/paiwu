@@ -14,8 +14,8 @@
 body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; letter-spacing: 0; }
 button, input, select { font: inherit; }
 button { cursor: pointer; }
-.topbar { height: 68px; display: grid; grid-template-columns: 330px 1fr 260px; align-items: center; padding: 0 24px; background: #202a33; color: white; border-bottom: 3px solid var(--red); }
-.brand { display: flex; align-items: center; gap: 11px; }
+.topbar { height: 68px; display: grid; grid-template-columns: 420px minmax(520px, 1fr) 220px; align-items: center; padding: 0 24px; background: #202a33; color: white; border-bottom: 3px solid var(--red); }
+.brand { min-width: 0; display: flex; align-items: center; gap: 11px; white-space: nowrap; }
 .brand-mark { width: 34px; height: 34px; display: grid; place-items: center; background: var(--red); font-size: 22px; font-weight: 800; border-radius: 4px; }
 .brand strong, .brand small { display: block; }
 .brand strong { font-size: 17px; }
@@ -25,7 +25,7 @@ button { cursor: pointer; }
 .lottery-switch button:last-child { border-right: 0; }
 .lottery-switch button.active { background: #f2a33a; color: #202a33; font-weight: 700; }
 .topnav { align-self: stretch; display: flex; justify-content: center; gap: 6px; }
-.nav-item { min-width: 96px; padding: 0 14px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: #c6cdd3; }
+.nav-item { min-width: 80px; padding: 0 10px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: #c6cdd3; }
 .nav-item:hover, .nav-item.active { color: white; background: #28343e; border-bottom-color: #f2a33a; }
 .latest-mini { justify-self: end; display: grid; grid-template-columns: auto auto; gap: 0 10px; align-items: center; }
 .latest-mini span { color: #9eabb5; }
@@ -82,6 +82,7 @@ select, input[type="search"] { height: 34px; border: 1px solid #cfd6dc; backgrou
 .kl8-grid { grid-template-columns: 1.25fr 1.25fr .8fr; }
 .pl3-single-daily { grid-column: span 2; }
 .daily-item { min-height: 142px; padding: 13px 14px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.daily-item[hidden] { display: none !important; }
 .daily-item.primary-daily { border-top: 3px solid var(--red); padding-top: 11px; }
 .daily-item header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .daily-item header strong { font-size: 13px; }
