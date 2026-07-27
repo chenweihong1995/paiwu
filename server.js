@@ -9,6 +9,8 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SNAPSHOT = path.join(__dirname, 'data', 'pl5-history.json');
 const RECOMMENDATION_HISTORY = path.join(__dirname, 'data', 'recommendation-history.json');
+const SUPABASE_URL = String(process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY || '');
 const DATA_URLS = {
   pl3: 'https://tb.tuganjue.com/api/pl3/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all',
   pl5: 'https://tb.tuganjue.com/api/pl5/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all',
@@ -120,7 +122,7 @@ function sendJson(request, response, status, value, cacheControl = 'no-store') {
   response.end(body);
 }
 
-function readRecommendationHistory() {
+function readRecommendationHistoryFile() {
   try {
     const value = JSON.parse(fs.readFileSync(RECOMMENDATION_HISTORY, 'utf8'));
     return Array.isArray(value) ? value : [];
@@ -129,9 +131,57 @@ function readRecommendationHistory() {
   }
 }
 
-function writeRecommendationHistory(history) {
+function writeRecommendationHistoryFile(history) {
   fs.mkdirSync(path.dirname(RECOMMENDATION_HISTORY), { recursive: true });
   fs.writeFileSync(RECOMMENDATION_HISTORY, JSON.stringify(history, null, 2));
+}
+
+function hasSupabase() {
+  return Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+}
+
+async function supabaseRequest(endpoint, options = {}) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${endpoint}`, {
+    ...options,
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    }
+  });
+  if (!response.ok) throw new Error(`Supabase request failed: ${response.status}`);
+  return response.status === 204 ? null : response.json();
+}
+
+async function readRecommendationHistory() {
+  if (hasSupabase()) {
+    try {
+      const rows = await supabaseRequest('recommendation_history?select=payload&order=created_at.asc&limit=1000');
+      if (Array.isArray(rows) && rows.length) return rows.map((row) => row.payload).filter(Boolean);
+    } catch (_) {
+      // Keep the review screen usable if the database is temporarily unavailable.
+    }
+  }
+  return readRecommendationHistoryFile();
+}
+
+async function writeRecommendationHistory(history) {
+  writeRecommendationHistoryFile(history);
+  if (!hasSupabase() || !history.length) return;
+  const rows = history.map((entry) => ({
+    id: entry.id,
+    lottery: entry.lottery,
+    source_issue: String(entry.sourceIssue),
+    source_date: entry.sourceDate || entry.date,
+    created_at: entry.createdAt || new Date().toISOString(),
+    payload: entry
+  }));
+  await supabaseRequest('recommendation_history?on_conflict=id', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(rows)
+  });
 }
 
 function recommendationKey(entry) {
@@ -257,7 +307,7 @@ const server = http.createServer(async (request, response) => {
           sendJson(request, response, 400, { error: 'Invalid recommendation snapshot' });
           return;
         }
-        const history = dedupeRecommendationHistory(readRecommendationHistory());
+        const history = dedupeRecommendationHistory(await readRecommendationHistory());
         const id = recommendationKey(snapshot);
         const normalized = {
           ...snapshot, id, date: snapshot.sourceDate || snapshot.date,
@@ -272,7 +322,7 @@ const server = http.createServer(async (request, response) => {
           createdAt: history[index].createdAt
         };
         else history.push(normalized);
-        writeRecommendationHistory(dedupeRecommendationHistory(history).slice(-1000));
+        await writeRecommendationHistory(dedupeRecommendationHistory(history).slice(-1000));
         sendJson(request, response, 201, { id });
       } catch (_) {
         sendJson(request, response, 400, { error: 'Unable to save recommendation snapshot' });
@@ -282,16 +332,16 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === 'GET') {
       const lottery = url.searchParams.get('lottery');
-      const storedHistory = readRecommendationHistory();
+      const storedHistory = await readRecommendationHistory();
       const history = dedupeRecommendationHistory(storedHistory);
       const refresh = url.searchParams.get('refresh') === '1';
       const summaryOnly = url.searchParams.get('summary') === '1';
       if (history.length !== storedHistory.length || history.some((entry, index) => entry.id !== storedHistory[index]?.id || entry.date !== storedHistory[index]?.date)) {
-        writeRecommendationHistory(history);
+        await writeRecommendationHistory(history);
       }
       if (!summaryOnly) {
         const [pl3, pl5, kl8] = await Promise.all([getDraws('pl3', refresh), getDraws('pl5', refresh), getDraws('kl8', refresh)]);
-        if (settleRecommendationHistory(history, { pl3, pl5, kl8 })) writeRecommendationHistory(history);
+        if (settleRecommendationHistory(history, { pl3, pl5, kl8 })) await writeRecommendationHistory(history);
       }
       const entries = history.filter((entry) => !lottery || entry.lottery === lottery)
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
