@@ -884,7 +884,7 @@ function kl8Plan(draws, count) {
 function saveKl8DailyRecommendation(draws, tenPlan, twelvePlan) {
   const latest = draws[draws.length - 1];
   if (!latest) return;
-  const key = `kl8-${beijingDate()}-${latest.issue}`;
+  const key = `kl8-${latest.issue}`;
   if (savedDailySnapshots.has(key)) return;
   savedDailySnapshots.add(key);
   const snapshotPlan = (keyName, label, plan) => ({
@@ -893,7 +893,7 @@ function saveKl8DailyRecommendation(draws, tenPlan, twelvePlan) {
     validationPositionRate: plan.validationPositionRate, validationHitAverage: plan.averageHits
   });
   const snapshot = {
-    id: key, lottery: 'kl8', date: beijingDate(), sourceIssue: String(latest.issue), sourceDate: latest.kjdate,
+    id: key, lottery: 'kl8', date: latest.kjdate, sourceIssue: String(latest.issue), sourceDate: latest.kjdate,
     createdAt: new Date().toISOString(), modelVersion: 'kl8-short-cycle-30-50-100-v1', recentWindows: RECENT_WINDOWS,
     recommendations: [snapshotPlan('ten', '选十推荐', tenPlan), snapshotPlan('twelve', '选十二备选', twelvePlan)], status: 'pending', outcome: null
   };
@@ -946,28 +946,41 @@ function planSnapshot(key, label, plan, positionCount) {
 function readLocalReviewHistory() {
   try {
     const entries = JSON.parse(localStorage.getItem(LOCAL_REVIEW_HISTORY_KEY) || '[]');
-    return Array.isArray(entries) ? entries : [];
+    return Array.isArray(entries) ? dedupeReviewEntries(entries) : [];
   } catch (_) {
     return [];
   }
 }
 
+function reviewEntryKey(entry) {
+  return `${entry.lottery}-${entry.sourceIssue}`;
+}
+
+function dedupeReviewEntries(entries) {
+  const deduped = new Map();
+  entries.forEach((entry) => {
+    if (!entry?.lottery || !entry?.sourceIssue) return;
+    const normalized = { ...entry, id: reviewEntryKey(entry), date: entry.sourceDate || entry.date };
+    const current = deduped.get(normalized.id);
+    if (!current
+      || (normalized.status === 'settled' && current.status !== 'settled')
+      || (normalized.status === current.status && String(normalized.createdAt || '').localeCompare(String(current.createdAt || '')) < 0)) {
+      deduped.set(normalized.id, normalized);
+    }
+  });
+  return [...deduped.values()];
+}
+
 function saveLocalReviewEntry(entry) {
-  const entries = readLocalReviewHistory();
-  const index = entries.findIndex((item) => item.id === entry.id);
-  if (index >= 0) entries[index] = { ...entries[index], ...entry };
-  else entries.push(entry);
+  const normalized = { ...entry, id: reviewEntryKey(entry), date: entry.sourceDate || entry.date };
+  const entries = dedupeReviewEntries([...readLocalReviewHistory(), normalized]);
   localStorage.setItem(LOCAL_REVIEW_HISTORY_KEY, JSON.stringify(entries.slice(-1000)));
 }
 
 function mergeReviewEntries(serverEntries) {
-  const merged = new Map(readLocalReviewHistory().map((entry) => [entry.id, entry]));
-  serverEntries.forEach((entry) => {
-    const local = merged.get(entry.id);
-    merged.set(entry.id, local?.status === 'settled' && entry.status !== 'settled' ? local : entry);
-    saveLocalReviewEntry(entry);
-  });
-  return [...merged.values()].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  const merged = dedupeReviewEntries([...readLocalReviewHistory(), ...serverEntries]);
+  localStorage.setItem(LOCAL_REVIEW_HISTORY_KEY, JSON.stringify(merged.slice(-1000)));
+  return merged.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
 async function syncPendingReviewEntries(lottery) {
@@ -1001,13 +1014,13 @@ async function loadReviewAdaptation(lottery) {
 function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount, singleTickets = [], groupTickets = {}) {
   const latest = draws[draws.length - 1];
   if (!latest) return;
-  const key = `${lottery}-${beijingDate()}-${latest.issue}`;
+  const key = `${lottery}-${latest.issue}`;
   if (savedDailySnapshots.has(key)) return;
   savedDailySnapshots.add(key);
   const positionCount = lottery === 'pl3' ? 3 : 5;
   const snapshot = {
     lottery,
-    date: beijingDate(),
+    date: latest.kjdate,
     sourceIssue: String(latest.issue),
     sourceDate: latest.kjdate,
     createdAt: new Date().toISOString(),
@@ -1022,7 +1035,7 @@ function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount
       ...(groupTickets.group6?.length ? [{ key: 'group6', label: '组六6码复式', type: 'group6', picks: groupTickets.group6.map(String), cost: 40, positionCount: 3, baseline: 20 / 720, validationRate: 0, validationPositionRate: 0 }] : [])
     ]
   };
-  snapshot.id = `${lottery}-${snapshot.date}-${snapshot.sourceIssue}`;
+  snapshot.id = `${lottery}-${snapshot.sourceIssue}`;
   snapshot.status = 'pending';
   snapshot.outcome = null;
   saveLocalReviewEntry(snapshot);
@@ -1608,7 +1621,9 @@ function renderReviewRows(entries) {
     const outcomeByKey = new Map((entry.outcome?.results || []).map((result) => [result.key, result]));
     const actual = entry.outcome?.actual || '';
     const actualDisplay = entry.lottery === 'kl8' ? (actual.match(/\d{2}/g) || []).join(' ') : [...actual].join(' ');
-    const actualCell = entry.status === 'settled' ? `<div class="review-result"><strong>${entry.outcome.targetIssue}期</strong><b>${actualDisplay}</b><small>${entry.outcome.targetDate}</small></div>` : '<span class="review-status pending">待下一期开奖</span>';
+    const actualCell = entry.status === 'settled'
+      ? `<div class="review-result"><strong>${entry.outcome.targetIssue}期</strong><b>${actualDisplay}</b><small>${entry.outcome.targetDate}</small></div>`
+      : `<span class="review-status pending">待下一期开奖<small>方案基于${entry.sourceIssue}期</small></span>`;
     return recommendations.map((recommendation, index) => {
       const outcome = outcomeByKey.get(recommendation.key);
       let code = '';
@@ -1629,7 +1644,7 @@ function renderReviewRows(entries) {
         else if (recommendation.type === 'group6') verdict = `<div class="review-status ${outcome.fullHit ? 'hit' : 'miss'}">${outcome.fullHit ? '组选命中' : '未中'}<small>六码命中 ${outcome.positionHitCount}/6 · ${(outcome.positionHitCount / 6 * 100).toFixed(1)}%</small></div>`;
         else verdict = `<div class="review-status ${outcome.fullHit ? 'hit' : 'miss'}">${outcome.fullHit ? '整注命中' : '未中'}<small>分位命中 ${outcome.positionHitCount}/${recommendation.positionCount} · ${(outcome.positionHitCount / recommendation.positionCount * 100).toFixed(1)}%</small></div>`;
       }
-      const shared = index === 0 ? `<td rowspan="${recommendations.length}">${entry.date}</td><td rowspan="${recommendations.length}">${labelOf(entry.lottery)}</td><td rowspan="${recommendations.length}">${entry.sourceIssue}期<br><small>${entry.sourceDate}</small></td>` : '';
+      const shared = index === 0 ? `<td rowspan="${recommendations.length}">${entry.sourceDate || entry.date}</td><td rowspan="${recommendations.length}">${labelOf(entry.lottery)}</td><td rowspan="${recommendations.length}">${entry.sourceIssue}期<br><small>${entry.sourceDate}</small></td>` : '';
       const resultShared = index === 0 ? `<td rowspan="${recommendations.length}">${actualCell}</td>` : '';
       return `<tr class="review-play-row">${shared}<td class="review-play"><strong>${recommendation.label}</strong><small>${recommendation.cost ? `${recommendation.cost}元` : '统计参考'}</small></td><td class="review-code">${code}</td><td class="review-validation">${validation}</td>${resultShared}<td>${verdict}</td></tr>`;
     });

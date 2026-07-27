@@ -85,7 +85,7 @@ function refreshInBackground(lottery) {
 
 async function getDraws(lottery, force = false) {
   if (!force && caches[lottery] && Date.now() - cacheTimes[lottery] < 10 * 60 * 1000) return caches[lottery];
-  const fallback = readSnapshot(lottery);
+  const fallback = caches[lottery]?.length ? caches[lottery] : readSnapshot(lottery);
   if (!force && fallback.length) {
     caches[lottery] = fallback;
     cacheTimes[lottery] = Date.now();
@@ -132,6 +132,25 @@ function readRecommendationHistory() {
 function writeRecommendationHistory(history) {
   fs.mkdirSync(path.dirname(RECOMMENDATION_HISTORY), { recursive: true });
   fs.writeFileSync(RECOMMENDATION_HISTORY, JSON.stringify(history, null, 2));
+}
+
+function recommendationKey(entry) {
+  return `${entry.lottery}-${entry.sourceIssue}`;
+}
+
+function dedupeRecommendationHistory(history) {
+  const entries = new Map();
+  history.forEach((entry) => {
+    if (!entry?.lottery || !entry?.sourceIssue) return;
+    const normalized = { ...entry, id: recommendationKey(entry), date: entry.sourceDate || entry.date };
+    const current = entries.get(normalized.id);
+    if (!current
+      || (normalized.status === 'settled' && current.status !== 'settled')
+      || (normalized.status === current.status && String(normalized.createdAt || '').localeCompare(String(current.createdAt || '')) < 0)) {
+      entries.set(normalized.id, normalized);
+    }
+  });
+  return [...entries.values()].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
 }
 
 function parseBody(request) {
@@ -238,13 +257,22 @@ const server = http.createServer(async (request, response) => {
           sendJson(request, response, 400, { error: 'Invalid recommendation snapshot' });
           return;
         }
-        const history = readRecommendationHistory();
-        const id = `${snapshot.lottery}-${snapshot.date}-${snapshot.sourceIssue}`;
-        const normalized = { ...snapshot, id, createdAt: snapshot.createdAt || new Date().toISOString(), status: 'pending', outcome: null };
+        const history = dedupeRecommendationHistory(readRecommendationHistory());
+        const id = recommendationKey(snapshot);
+        const normalized = {
+          ...snapshot, id, date: snapshot.sourceDate || snapshot.date,
+          createdAt: snapshot.createdAt || new Date().toISOString(), status: 'pending', outcome: null
+        };
         const index = history.findIndex((entry) => entry.id === id);
-        if (index >= 0) history[index] = { ...history[index], ...normalized, createdAt: history[index].createdAt };
+        if (index >= 0) history[index] = {
+          ...normalized,
+          ...history[index],
+          id,
+          date: history[index].sourceDate || normalized.date,
+          createdAt: history[index].createdAt
+        };
         else history.push(normalized);
-        writeRecommendationHistory(history.slice(-1000));
+        writeRecommendationHistory(dedupeRecommendationHistory(history).slice(-1000));
         sendJson(request, response, 201, { id });
       } catch (_) {
         sendJson(request, response, 400, { error: 'Unable to save recommendation snapshot' });
@@ -254,9 +282,13 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === 'GET') {
       const lottery = url.searchParams.get('lottery');
-      const history = readRecommendationHistory();
+      const storedHistory = readRecommendationHistory();
+      const history = dedupeRecommendationHistory(storedHistory);
       const refresh = url.searchParams.get('refresh') === '1';
       const summaryOnly = url.searchParams.get('summary') === '1';
+      if (history.length !== storedHistory.length || history.some((entry, index) => entry.id !== storedHistory[index]?.id || entry.date !== storedHistory[index]?.date)) {
+        writeRecommendationHistory(history);
+      }
       if (!summaryOnly) {
         const [pl3, pl5, kl8] = await Promise.all([getDraws('pl3', refresh), getDraws('pl5', refresh), getDraws('kl8', refresh)]);
         if (settleRecommendationHistory(history, { pl3, pl5, kl8 })) writeRecommendationHistory(history);
