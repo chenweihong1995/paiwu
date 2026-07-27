@@ -309,18 +309,26 @@ const server = http.createServer(async (request, response) => {
         }
         const history = dedupeRecommendationHistory(await readRecommendationHistory());
         const id = recommendationKey(snapshot);
+        const incomingSettled = snapshot.status === 'settled' && snapshot.outcome ? snapshot : null;
         const normalized = {
           ...snapshot, id, date: snapshot.sourceDate || snapshot.date,
-          createdAt: snapshot.createdAt || new Date().toISOString(), status: 'pending', outcome: null
+          createdAt: snapshot.createdAt || new Date().toISOString(),
+          status: incomingSettled ? 'settled' : 'pending', outcome: incomingSettled?.outcome || null
         };
         const index = history.findIndex((entry) => entry.id === id);
-        if (index >= 0) history[index] = {
-          ...normalized,
-          ...history[index],
-          id,
-          date: history[index].sourceDate || normalized.date,
-          createdAt: history[index].createdAt
-        };
+        if (index >= 0) {
+          const existing = history[index];
+          const settled = existing.status === 'settled' ? existing : normalized.status === 'settled' ? normalized : null;
+          history[index] = {
+            ...normalized,
+            ...existing,
+            id,
+            date: existing.sourceDate || normalized.date,
+            createdAt: existing.createdAt,
+            status: settled?.status || 'pending',
+            outcome: settled?.outcome || null
+          };
+        }
         else history.push(normalized);
         await writeRecommendationHistory(dedupeRecommendationHistory(history).slice(-1000));
         sendJson(request, response, 201, { id });
@@ -344,7 +352,7 @@ const server = http.createServer(async (request, response) => {
         if (settleRecommendationHistory(history, { pl3, pl5, kl8 })) await writeRecommendationHistory(history);
       }
       const entries = history.filter((entry) => !lottery || entry.lottery === lottery)
-        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+        .sort((a, b) => Number(b.sourceIssue) - Number(a.sourceIssue) || String(b.createdAt).localeCompare(String(a.createdAt)));
       sendJson(request, response, 200, { data: entries, adaptation: reviewAdaptation(history, lottery) });
       return;
     }

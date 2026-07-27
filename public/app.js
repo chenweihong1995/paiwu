@@ -980,12 +980,12 @@ function saveLocalReviewEntry(entry) {
 function mergeReviewEntries(serverEntries) {
   const merged = dedupeReviewEntries([...readLocalReviewHistory(), ...serverEntries]);
   localStorage.setItem(LOCAL_REVIEW_HISTORY_KEY, JSON.stringify(merged.slice(-1000)));
-  return merged.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  return merged.sort((a, b) => Number(b.sourceIssue) - Number(a.sourceIssue) || String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
-async function syncPendingReviewEntries(lottery) {
-  const pending = readLocalReviewHistory().filter((entry) => entry.lottery === lottery && entry.status === 'pending');
-  await Promise.all(pending.map(async (entry) => {
+async function syncReviewEntries(lottery) {
+  const entries = readLocalReviewHistory().filter((entry) => entry.lottery === lottery);
+  await Promise.all(entries.map(async (entry) => {
     const response = await fetch('/api/recommendations', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry)
     });
@@ -1655,7 +1655,7 @@ function renderReviewRows(entries) {
 async function renderReview() {
   $('#review-summary').textContent = '正在核对历史推荐与最新开奖...';
   try {
-    await syncPendingReviewEntries(state.lottery);
+    await syncReviewEntries(state.lottery);
     const response = await fetch(`/api/recommendations?lottery=${state.lottery}&refresh=1`);
     const result = await response.json();
     applyReviewAdaptation(state.lottery, result.adaptation);
