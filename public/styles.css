@@ -309,7 +309,7 @@ th, td { height: 38px; padding: 0 14px; border-bottom: 1px solid #e8ecef; text-a
 td.number { color: var(--red); font-weight: 800; letter-spacing: 4px; }
 #toast { position: fixed; right: 22px; bottom: 22px; z-index: 20; padding: 10px 14px; background: #26333c; color: white; border-radius: 4px; opacity: 0; transform: translateY(8px); transition: .2s; pointer-events: none; }
 #toast.show { opacity: 1; transform: translateY(0); }
-@media (max-width: 1180px) {
+@media (max-width: 1280px) {
   .topbar { height: auto; min-height: 112px; grid-template-columns: 1fr auto; padding: 10px 14px 0; }
   .brand { gap: 7px; min-width: 0; white-space: nowrap; }
   .brand strong { font-size: 15px; }
