@@ -22,6 +22,7 @@ const RECENT_WINDOWS = [30, 50, 100];
 const BASE_RECENT_WINDOW_WEIGHTS = [.45, .35, .2];
 const adaptiveWindowWeights = { pl3: BASE_RECENT_WINDOW_WEIGHTS, pl5: BASE_RECENT_WINDOW_WEIGHTS, kl8: BASE_RECENT_WINDOW_WEIGHTS };
 const adaptiveDirections = { pl3: '基础权重', pl5: '基础权重', kl8: '基础权重' };
+const adaptiveStrategyReady = { pl3: false, pl5: false, kl8: false };
 let tuningVersion = 0;
 const RECENT_WEIGHT_CANDIDATES = [.6, .7, .8, .9];
 let positionNames = ['万位', '千位', '百位', '十位', '个位'];
@@ -924,7 +925,7 @@ function renderKl8Overview(draws) {
   $('#kl8-algorithm-summary').textContent = `近30/50/100期按${recentWeightLabel('kl8')}评分，后${tenPlan.validationSize}期滚动验证`;
   $('#kl8-hit-rate').textContent = `选十平均命中：${tenPlan.averageHits.toFixed(2)}个 · 理论2.50个`;
   $('#kl8-coverage-rate').textContent = `号码覆盖率：${(tenPlan.validationPositionRate * 100).toFixed(1)}% · 理论12.5%`;
-  saveKl8DailyRecommendation(draws, tenPlan, twelvePlan);
+  if (adaptiveStrategyReady.kl8) saveKl8DailyRecommendation(draws, tenPlan, twelvePlan);
 }
 
 function planSnapshot(key, label, plan, positionCount) {
@@ -1008,6 +1009,8 @@ async function loadReviewAdaptation(lottery) {
     applyReviewAdaptation(lottery, result.adaptation);
   } catch (_) {
     // Recommendations remain on the base weights when review data is unavailable.
+  } finally {
+    adaptiveStrategyReady[lottery] = true;
   }
 }
 
@@ -1092,11 +1095,7 @@ async function backfillPreviousReview(lottery) {
 function buildDailyOverview(draws, lottery) {
   const isPl3 = lottery === 'pl3';
   const names = isPl3 ? ['百位', '十位', '个位'] : ['万位', '千位', '百位', '十位', '个位'];
-  const wideCount = isPl3 ? 6 : 3;
-  const narrowCount = isPl3 ? 3 : 2;
-  const backtest = createBacktest(draws, lottery);
-  const narrowPlan = selectBacktestedPlan(backtest, narrowCount);
-  const widePlan = createExpandedPlan(backtest, narrowPlan, wideCount);
+  const { widePlan, narrowPlan, wideCount, narrowCount } = archivedRecommendationPlans(draws, lottery);
   const trendEntries = trendProjectionEntries(draws, lottery);
   const trendByPosition = new Map(trendEntries.map((entry) => [entry.position, entry]));
   const trendSummary = trendEntries.length ? ` · 图形延长候选：${trendEntries.map((entry) => `${names[entry.position]}${entry.digit}`).join('、')}；其余位置按模型` : '';
@@ -1158,11 +1157,16 @@ function buildDailyOverview(draws, lottery) {
     $('#daily-group6').textContent = routeLine.join(' ');
     $('#daily-group6-detail').textContent = '万、千、百、十、个位依次对应的012路';
   }
-  saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount, singleTickets, groupTickets);
+  if (adaptiveStrategyReady[lottery]) {
+    saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount, narrowCount, singleTickets, groupTickets);
+  }
 }
 
 function renderBacktestedRecommendation(count) {
-  const plan = selectBacktestedPlan(createBacktest(state.draws, state.lottery), count);
+  const dailyPlans = archivedRecommendationPlans(state.draws, state.lottery);
+  const plan = count === dailyPlans.wideCount ? dailyPlans.widePlan
+    : count === dailyPlans.narrowCount ? dailyPlans.narrowPlan
+      : selectBacktestedPlan(createBacktest(state.draws, state.lottery), count);
   const picks = plan.picks;
   const names = positionNames;
   $('#number-picks').style.gridTemplateColumns = `repeat(${names.length}, minmax(90px, 1fr))`;
@@ -2137,6 +2141,7 @@ async function loadData(refresh = false) {
   $('#refresh-button').disabled = true;
   const lottery = state.lottery;
   try {
+    adaptiveStrategyReady[lottery] = false;
     const cachedDraws = !refresh ? overviewData[lottery] : [];
     if (cachedDraws.length && state.lottery === lottery) {
       state.draws = cachedDraws;
