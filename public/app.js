@@ -205,12 +205,18 @@ function analysisDefinition(mode) {
   const positional = (categories, value) => ({
     groups: positionNames.map((name, index) => ({ name, categories, value: (draw, previous) => value(digits(draw)[index], digits(previous || draw)[index]) }))
   });
+  const positionalWithPattern = (categories, value, patternCategories = categories) => ({
+    groups: [
+      ...positional(categories, value).groups,
+      { name: '整体形态', categories: patternCategories, value: (draw) => digits(draw).map((digit) => value(digit)).join('') }
+    ]
+  });
   const single = (name, categories, value) => ({ groups: [{ name, categories, value }] });
   const definitions = {
-    odd: positional(['偶', '奇'], (n) => n % 2 ? '奇' : '偶'),
-    size: positional(['小', '大'], (n) => n >= 5 ? '大' : '小'),
-    zone: positional(['小', '中', '大'], (n) => n <= 2 ? '小' : n <= 6 ? '中' : '大'),
-    prime: positional(['合', '质'], (n) => isPrime(n) ? '质' : '合'),
+    odd: positionalWithPattern(['偶', '奇'], (n) => n % 2 ? '奇' : '偶', patternList(['偶', '奇'], digitCount())),
+    size: positionalWithPattern(['小', '大'], (n) => n >= 5 ? '大' : '小', patternList(['小', '大'], digitCount())),
+    zone: positionalWithPattern(['小', '中', '大'], (n) => n <= 2 ? '小' : n <= 6 ? '中' : '大', patternList(['小', '中', '大'], digitCount())),
+    prime: positionalWithPattern(['合', '质'], (n) => isPrime(n) ? '质' : '合', patternList(['合', '质'], digitCount())),
     updown: positional(['升', '平', '降'], (n, prev) => n > prev ? '升' : n < prev ? '降' : '平'),
     amplitude: positional(Array.from({ length: 10 }, (_, n) => String(n)), (n, prev) => String(Math.abs(n - prev))),
     sum: single('和值', Array.from({ length: digitCount() * 9 + 1 }, (_, n) => String(n)), (draw) => String(sum(digits(draw)))),
@@ -335,6 +341,7 @@ function renderAnalysisTrend(selected) {
   const columns = definition.groups.reduce((count, group) => count + group.categories.length, 0);
   const template = `82px 76px repeat(${columns}, 38px) 70px 70px 70px`;
   const allRows = [];
+  const hitHistory = definition.groups.map((group) => Object.fromEntries(group.categories.map((category) => [category, []])));
   const omissions = definition.groups.map((group) => Object.fromEntries(group.categories.map((category) => [category, 0])));
   state.draws.forEach((draw, index) => {
     const previous = state.draws[index - 1] || draw;
@@ -342,7 +349,9 @@ function renderAnalysisTrend(selected) {
       const hit = group.value(draw, previous);
       const values = {};
       group.categories.forEach((category) => {
-        if (category === hit) omissions[groupIndex][category] = 0;
+        const isHit = category === hit;
+        hitHistory[groupIndex][category].push(isHit);
+        if (isHit) omissions[groupIndex][category] = 0;
         else omissions[groupIndex][category] += 1;
         values[category] = omissions[groupIndex][category];
       });
@@ -364,6 +373,21 @@ function renderAnalysisTrend(selected) {
       html += `<div class="chart-cell pos-${groupIndex % 5 + 1} ${hit ? 'hit' : ''} ${categoryIndex === group.categories.length - 1 ? 'group-end' : ''}">${hit ? category : row.values[category]}</div>`;
     }));
     html += `<div class="chart-cell metric-cell draw-number">${ds.join('')}</div><div class="chart-cell metric-cell">${m.total}</div><div class="chart-cell metric-cell">${m.span}</div></div>`;
+  });
+  const summaryRows = [
+    ['当前遗漏', 'current'],
+    ['上期遗漏', 'previous'],
+    ['平均遗漏', 'average'],
+    ['最大遗漏', 'maximum']
+  ];
+  summaryRows.forEach(([label, key]) => {
+    html += `<div class="chart-row analysis-row stats-row" style="grid-template-columns:${template}"><div class="chart-cell fixed">${label}</div><div class="chart-cell fixed">全历史</div>`;
+    definition.groups.forEach((group, groupIndex) => group.categories.forEach((category, categoryIndex) => {
+      const stats = omissionStats(hitHistory[groupIndex][category]);
+      const value = key === 'average' ? stats.average.toFixed(1) : stats[key];
+      html += `<div class="chart-cell ${categoryIndex === group.categories.length - 1 ? 'group-end' : ''}">${value}</div>`;
+    }));
+    html += '<div class="chart-cell metric-cell">-</div><div class="chart-cell metric-cell">-</div><div class="chart-cell metric-cell">-</div></div>';
   });
   $('#trend-table').innerHTML = html;
   requestAnimationFrame(drawLines);
@@ -401,6 +425,20 @@ function renderTrend() {
       html += `<div class="chart-cell pos-${p + 1} ${hit ? 'hit' : ''} ${n === 9 ? 'group-end' : ''}">${hit ? n : rowOmits[p][n]}</div>`;
     }
     html += extraMetrics(draw, previous).map((value) => `<div class="chart-cell metric-cell">${value}</div>`).join('') + '</div>';
+  });
+  const positionHits = Array.from({ length: digitCount() }, () => Array.from({ length: 10 }, () => []));
+  state.draws.forEach((draw) => {
+    const ds = digits(draw);
+    for (let p = 0; p < digitCount(); p++) for (let n = 0; n < 10; n++) positionHits[p][n].push(ds[p] === n);
+  });
+  [['当前遗漏', 'current'], ['上期遗漏', 'previous'], ['平均遗漏', 'average'], ['最大遗漏', 'maximum']].forEach(([label, key]) => {
+    html += `<div class="chart-row stats-row" style="grid-template-columns:${template}"><div class="chart-cell fixed">${label}</div><div class="chart-cell fixed">全历史</div>`;
+    for (let p = 0; p < digitCount(); p++) for (let n = 0; n < 10; n++) {
+      const stats = omissionStats(positionHits[p][n]);
+      const value = key === 'average' ? stats.average.toFixed(1) : stats[key];
+      html += `<div class="chart-cell ${n === 9 ? 'group-end' : ''}">${value}</div>`;
+    }
+    html += '<div class="chart-cell metric-cell">-</div>'.repeat(6) + '</div>';
   });
   $('#trend-table').innerHTML = html;
   requestAnimationFrame(drawLines);
