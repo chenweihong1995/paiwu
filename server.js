@@ -324,6 +324,11 @@ function reviewAdaptation(history, lottery) {
 
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
+  if (url.pathname === '/api/health') {
+    sendJson(request, response, 200, { ok: true, now: new Date().toISOString() });
+    return;
+  }
+
   if (url.pathname === '/api/draws') {
     const requestedLottery = url.searchParams.get('lottery');
     const lottery = ['pl3', 'pl5', 'kl8', 'f3d'].includes(requestedLottery) ? requestedLottery : 'pl5';
