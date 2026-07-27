@@ -14,7 +14,8 @@ const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY |
 const DATA_URLS = {
   pl3: 'https://tb.tuganjue.com/api/pl3/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all',
   pl5: 'https://tb.tuganjue.com/api/pl5/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all',
-  kl8: 'https://tb.tuganjue.com/api/kl8/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all'
+  kl8: 'https://tb.tuganjue.com/api/kl8/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all',
+  f3d: 'https://tb.tuganjue.com/f3d/php/kjfb.php?mobile=2&client=&ref='
 };
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -24,9 +25,9 @@ const MIME = {
   '.svg': 'image/svg+xml'
 };
 
-const caches = { pl3: null, pl5: null, kl8: null };
-const cacheTimes = { pl3: 0, pl5: 0, kl8: 0 };
-const pendingRefreshes = { pl3: null, pl5: null, kl8: null };
+const caches = { pl3: null, pl5: null, kl8: null, f3d: null };
+const cacheTimes = { pl3: 0, pl5: 0, kl8: 0, f3d: 0 };
+const pendingRefreshes = { pl3: null, pl5: null, kl8: null, f3d: null };
 let pl5Snapshot = null;
 
 function normalizeDraw(draw, lottery) {
@@ -34,7 +35,7 @@ function normalizeDraw(draw, lottery) {
     const numbers = String(draw.winnum || '').replace(/<[^>]*>/g, ' ').match(/\d{1,2}/g) || [];
     return { ...draw, winnum: numbers.slice(0, 20).map((number) => number.padStart(2, '0')).join(' ') };
   }
-  const count = lottery === 'pl3' ? 3 : 5;
+  const count = ['pl3', 'f3d'].includes(lottery) ? 3 : 5;
   const clean = String(draw.winnum || '').replace(/<[^>]*>/g, '').replace(/\D/g, '').slice(0, count).padStart(count, '0');
   return { ...draw, winnum: clean.split('').join(' ') };
 }
@@ -48,7 +49,8 @@ function readSnapshot(lottery) {
   return pl5Snapshot;
 }
 
-function fetchRemote(lottery) {
+function fetchRemote(lottery, requestedLimit = 1000) {
+  if (lottery === 'f3d') return fetchF3dRemote(requestedLimit);
   return new Promise((resolve, reject) => {
     const request = https.get(DATA_URLS[lottery], { timeout: 12000 }, (response) => {
       if (response.statusCode !== 200) {
@@ -73,6 +75,28 @@ function fetchRemote(lottery) {
   });
 }
 
+async function fetchF3dRemote(requestedLimit = 1000) {
+  const pageSize = Math.min(10000, Math.max(1000, Number(requestedLimit) || 1000));
+  const response = await fetch(DATA_URLS.f3d, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+    body: `from=&to=&week=all&pagesize=${pageSize}&page=1&order=asc&date=1`,
+    signal: AbortSignal.timeout(pageSize > 1000 ? 45000 : 12000)
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const html = await response.text();
+  const draws = [];
+  for (const row of html.match(/<tr[^>]*>[\s\S]*?<\/tr>/g) || []) {
+    const issue = row.match(/<td\s+class="qs">(\d{7})<\/td>/)?.[1];
+    const date = row.match(/<td\s+class="da">(\d{4}-\d{2}-\d{2})<\/td>/)?.[1] || '';
+    const digits = [...row.matchAll(/<td\s+id="h[123]_[^"]*"[^>]*>([\s\S]*?)<\/td>/g)]
+      .map((match) => match[1].replace(/<[^>]*>/g, '').match(/\d/)?.[0]).join('');
+    if (!issue || digits.length !== 3) continue;
+    draws.push({ issue, kjdate: date, winnum: digits });
+  }
+  return draws.map((draw) => normalizeDraw(draw, 'f3d'));
+}
+
 function refreshInBackground(lottery) {
   if (pendingRefreshes[lottery]) return;
   pendingRefreshes[lottery] = fetchRemote(lottery)
@@ -85,17 +109,20 @@ function refreshInBackground(lottery) {
     .finally(() => { pendingRefreshes[lottery] = null; });
 }
 
-async function getDraws(lottery, force = false) {
-  if (!force && caches[lottery] && Date.now() - cacheTimes[lottery] < 10 * 60 * 1000) return caches[lottery];
+async function getDraws(lottery, force = false, requiredLimit = 0) {
+  const requiredSize = lottery === 'f3d' ? Math.min(10000, Math.max(1000, Number(requiredLimit) || 1000)) : 0;
+  const cacheIsEnough = caches[lottery]?.length && (lottery !== 'f3d' || caches[lottery].length >= requiredSize);
+  if (!force && cacheIsEnough && Date.now() - cacheTimes[lottery] < 10 * 60 * 1000) return caches[lottery];
   const fallback = caches[lottery]?.length ? caches[lottery] : readSnapshot(lottery);
-  if (!force && fallback.length) {
+  const fallbackIsEnough = fallback.length && (lottery !== 'f3d' || fallback.length >= requiredSize);
+  if (!force && fallbackIsEnough) {
     caches[lottery] = fallback;
     cacheTimes[lottery] = Date.now();
     refreshInBackground(lottery);
     return fallback;
   }
   try {
-    const remote = await fetchRemote(lottery);
+    const remote = await fetchRemote(lottery, requiredSize);
     if (remote.length) {
       caches[lottery] = remote;
       cacheTimes[lottery] = Date.now();
@@ -219,7 +246,7 @@ function parseBody(request) {
 }
 
 function isValidSnapshot(snapshot) {
-  return snapshot && ['pl3', 'pl5', 'kl8'].includes(snapshot.lottery) && /^\d+$/.test(String(snapshot.sourceIssue || ''))
+  return snapshot && ['pl3', 'pl5', 'kl8', 'f3d'].includes(snapshot.lottery) && /^\d+$/.test(String(snapshot.sourceIssue || ''))
     && /^\d{4}-\d{2}-\d{2}$/.test(String(snapshot.date || '')) && Array.isArray(snapshot.recommendations)
     && snapshot.recommendations.length > 0 && snapshot.recommendations.length <= 6;
 }
@@ -299,9 +326,9 @@ const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
   if (url.pathname === '/api/draws') {
     const requestedLottery = url.searchParams.get('lottery');
-    const lottery = ['pl3', 'pl5', 'kl8'].includes(requestedLottery) ? requestedLottery : 'pl5';
-    const draws = await getDraws(lottery, url.searchParams.get('refresh') === '1');
+    const lottery = ['pl3', 'pl5', 'kl8', 'f3d'].includes(requestedLottery) ? requestedLottery : 'pl5';
     const limit = Math.min(10000, Math.max(20, Number(url.searchParams.get('limit') || 300)));
+    const draws = await getDraws(lottery, url.searchParams.get('refresh') === '1', limit);
     const data = draws.slice(-limit).map(({ issue, kjdate, winnum }) => ({ issue, kjdate, winnum }));
     sendJson(request, response, 200, { lottery, updatedAt: new Date().toISOString(), total: draws.length, data });
     return;
@@ -356,8 +383,8 @@ const server = http.createServer(async (request, response) => {
         await writeRecommendationHistory(history);
       }
       if (!summaryOnly) {
-        const [pl3, pl5, kl8] = await Promise.all([getDraws('pl3', refresh), getDraws('pl5', refresh), getDraws('kl8', refresh)]);
-        if (settleRecommendationHistory(history, { pl3, pl5, kl8 })) await writeRecommendationHistory(history);
+        const [pl3, pl5, kl8, f3d] = await Promise.all([getDraws('pl3', refresh), getDraws('pl5', refresh), getDraws('kl8', refresh), getDraws('f3d', refresh)]);
+        if (settleRecommendationHistory(history, { pl3, pl5, kl8, f3d })) await writeRecommendationHistory(history);
       }
       const entries = history.filter((entry) => !lottery || entry.lottery === lottery)
         .sort((a, b) => Number(b.sourceIssue) - Number(a.sourceIssue) || String(b.createdAt).localeCompare(String(a.createdAt)));

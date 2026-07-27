@@ -1,13 +1,13 @@
 const state = { lottery: 'pl5', draws: [], periods: 50, mode: 'position', lines: true, view: 'overview' };
-const overviewData = { pl3: [], pl5: [], kl8: [] };
-const lotteryTotals = { pl3: 0, pl5: 0, kl8: 0 };
-const fullHistoryPromises = { pl3: null, pl5: null, kl8: null };
+const overviewData = { pl3: [], pl5: [], kl8: [], f3d: [] };
+const lotteryTotals = { pl3: 0, pl5: 0, kl8: 0, f3d: 0 };
+const fullHistoryPromises = { pl3: null, pl5: null, kl8: null, f3d: null };
 const scheduledCalibrations = new Set();
 let overviewAnalysisTimer = null;
 let overviewAnalysisKey = '';
 let pl3SingleFocusKey = '';
-const overviewRecommendations = { pl3: { wide: [], narrow: [], singles: [] }, pl5: { wide: [], narrow: [] }, kl8: { ten: [], twelve: [] } };
-const algorithmCaches = { pl3: null, pl5: null };
+const overviewRecommendations = { pl3: { wide: [], narrow: [], singles: [] }, pl5: { wide: [], narrow: [] }, kl8: { ten: [], twelve: [] }, f3d: { wide: [], narrow: [], singles: [] } };
+const algorithmCaches = { pl3: null, pl5: null, f3d: null };
 const savedDailySnapshots = new Set();
 const LOCAL_REVIEW_HISTORY_KEY = 'lottery-recommendation-history-v1';
 const LOCAL_DRAW_CACHE_KEY = 'lottery-draw-cache-v2';
@@ -20,9 +20,9 @@ const WEIGHT_VALIDATION_WINDOW = 100;
 const MODEL_LOOKBACK = 180;
 const RECENT_WINDOWS = [30, 50, 100];
 const BASE_RECENT_WINDOW_WEIGHTS = [.45, .35, .2];
-const adaptiveWindowWeights = { pl3: BASE_RECENT_WINDOW_WEIGHTS, pl5: BASE_RECENT_WINDOW_WEIGHTS, kl8: BASE_RECENT_WINDOW_WEIGHTS };
-const adaptiveDirections = { pl3: '基础权重', pl5: '基础权重', kl8: '基础权重' };
-const adaptiveStrategyReady = { pl3: false, pl5: false, kl8: false };
+const adaptiveWindowWeights = { pl3: BASE_RECENT_WINDOW_WEIGHTS, pl5: BASE_RECENT_WINDOW_WEIGHTS, kl8: BASE_RECENT_WINDOW_WEIGHTS, f3d: BASE_RECENT_WINDOW_WEIGHTS };
+const adaptiveDirections = { pl3: '基础权重', pl5: '基础权重', kl8: '基础权重', f3d: '基础权重' };
+const adaptiveStrategyReady = { pl3: false, pl5: false, kl8: false, f3d: false };
 let tuningVersion = 0;
 const RECENT_WEIGHT_CANDIDATES = [.6, .7, .8, .9];
 let positionNames = ['万位', '千位', '百位', '十位', '个位'];
@@ -36,6 +36,7 @@ const baseTrendModes = [
 ];
 const routeModes = {
   pl3: [['route-main', '012路走势图', '路'], ['route-digits', '012走势图2', '数'], ['route-direct', '012路直选图', '直']],
+  f3d: [['route-main', '012路走势图', '路'], ['route-digits', '012走势图2', '数'], ['route-direct', '012路直选图', '直']],
   pl5: [['route-main', '012路走势图', '路'], ['route-digits', '012走势图2', '数'], ['route-front4', '前四012', '前'], ['route-back4', '后四012', '后']]
 };
 const selectorState = {
@@ -56,8 +57,9 @@ const recentWeightLabel = (lottery = state.lottery) => recentWindowWeights(lotte
 const beijingDate = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' })
   .formatToParts(new Date()).filter((part) => part.type !== 'literal').map((part) => part.value).join('-');
 const isHappy8 = () => state.lottery === 'kl8';
-const digitCount = () => state.lottery === 'pl3' ? 3 : 5;
-const lotteryName = () => state.lottery === 'pl3' ? '排列三' : state.lottery === 'kl8' ? '快乐8' : '排列五';
+const isThreeDigitLottery = (lottery = state.lottery) => lottery === 'pl3' || lottery === 'f3d';
+const digitCount = () => isThreeDigitLottery() ? 3 : 5;
+const lotteryName = () => state.lottery === 'pl3' ? '排列三' : state.lottery === 'f3d' ? '福彩3D' : state.lottery === 'kl8' ? '快乐8' : '排列五';
 const drawDigits = (draw, count) => String(draw?.winnum || '').replace(/<[^>]*>/g, '').replace(/\D/g, '').slice(0, count).padStart(count, '0').split('').map(Number);
 const digits = (draw) => drawDigits(draw, digitCount());
 const sum = (values) => values.reduce((a, b) => a + b, 0);
@@ -70,7 +72,7 @@ function compactDraw(draw) {
 function hydrateDrawCache() {
   try {
     const stored = JSON.parse(localStorage.getItem(LOCAL_DRAW_CACHE_KEY) || '{}');
-    ['pl3', 'pl5', 'kl8'].forEach((lottery) => {
+    ['pl3', 'pl5', 'kl8', 'f3d'].forEach((lottery) => {
       const entry = stored[lottery];
       if (!Array.isArray(entry?.data) || !entry.data.length) return;
       overviewData[lottery] = entry.data;
@@ -131,7 +133,7 @@ function scheduleLotteryCalibration(lottery) {
 }
 
 function refreshLotteryConfig() {
-  positionNames = state.lottery === 'pl3' ? ['百位', '十位', '个位'] : ['万位', '千位', '百位', '十位', '个位'];
+  positionNames = isThreeDigitLottery() ? ['百位', '十位', '个位'] : ['万位', '千位', '百位', '十位', '个位'];
   trendModes = isHappy8() ? [] : [...baseTrendModes.slice(0, 2), ...routeModes[state.lottery], ...baseTrendModes.slice(2)];
 }
 
@@ -254,7 +256,7 @@ function routeDefinition(mode) {
   const groups = [...positional(['0路', '1路', '2路'], (digit) => `${digit % 3}路`)];
   if (mode !== 'route-direct') groups.push(...countGroups);
   if (mode === 'route-front4' || mode === 'route-back4') return { groups };
-  if (state.lottery === 'pl3') {
+  if (isThreeDigitLottery()) {
     groups.push({ name: '整体形态', categories: 'ABCDEFGHIJ'.split(''), value: (draw) => pl3ShapeMap[routeCounts(draw, positions).join('')] });
     if (mode === 'route-direct') groups.push({ name: '直选012分布', categories: directRoutes, value: (draw) => digits(draw).map((n) => n % 3).join('') });
   } else {
@@ -572,7 +574,7 @@ function modelRankingsAt(series, end, position) {
 function createBacktest(draws, lottery = state.lottery) {
   const signature = `${draws.length}:${draws[draws.length - 1]?.issue || ''}:${tuningVersion}`;
   if (algorithmCaches[lottery]?.signature === signature) return algorithmCaches[lottery];
-  const positionCount = lottery === 'pl3' ? 3 : 5;
+  const positionCount = isThreeDigitLottery(lottery) ? 3 : 5;
   const series = draws.map((draw) => drawDigits(draw, positionCount));
   const start = Math.max(220, series.length - BACKTEST_WINDOW);
   const records = [];
@@ -1032,7 +1034,7 @@ function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount
   const key = `${lottery}-${latest.issue}`;
   if (savedDailySnapshots.has(key)) return Promise.resolve();
   savedDailySnapshots.add(key);
-  const positionCount = lottery === 'pl3' ? 3 : 5;
+  const positionCount = isThreeDigitLottery(lottery) ? 3 : 5;
   const snapshot = {
     lottery,
     date: latest.kjdate,
@@ -1064,7 +1066,7 @@ function saveDailyRecommendation(draws, lottery, widePlan, narrowPlan, wideCount
 }
 
 function archivedRecommendationPlans(draws, lottery) {
-  const isPl3 = lottery === 'pl3';
+  const isPl3 = isThreeDigitLottery(lottery);
   const positionCount = isPl3 ? 3 : 5;
   const wideCount = isPl3 ? 6 : 3;
   const narrowCount = isPl3 ? 3 : 2;
@@ -1105,7 +1107,7 @@ async function backfillPreviousReview(lottery) {
 }
 
 function buildDailyOverview(draws, lottery) {
-  const isPl3 = lottery === 'pl3';
+  const isPl3 = isThreeDigitLottery(lottery);
   const names = isPl3 ? ['百位', '十位', '个位'] : ['万位', '千位', '百位', '十位', '个位'];
   const { widePlan, narrowPlan, wideCount, narrowCount } = archivedRecommendationPlans(draws, lottery);
   const trendEntries = trendProjectionEntries(draws, lottery);
@@ -1412,7 +1414,7 @@ function pl5MotifBoardMarkup(draws) {
 }
 
 function trendProjectionEntries(draws, lottery) {
-  const found = lottery === 'pl3' ? pl3MotifCandidates(draws) : pl5MotifCandidates(draws);
+  const found = isThreeDigitLottery(lottery) ? pl3MotifCandidates(draws) : pl5MotifCandidates(draws);
   const entries = new Map();
   ['pair', 'stair', 'carry', 'neighbor'].forEach((type) => {
     const motif = selectMotif(found, type);
@@ -1525,7 +1527,8 @@ function renderPl3OverviewFocus(pl3) {
   $('#focus-pl5').classList.remove('horizontal');
   $('#focus-pl5').classList.add('line-observation');
   $('#focus-pl5').innerHTML = pl3MotifBoardMarkup(pl3);
-  loadPl3SingleFocus();
+  if (state.lottery === 'pl3') loadPl3SingleFocus();
+  else $('#focus-pl3-singles').hidden = true;
 }
 
 function renderPl5OverviewFocus(pl5) {
@@ -1565,6 +1568,7 @@ function renderOverview() {
   const pl3 = overviewData.pl3;
   const pl5 = overviewData.pl5;
   const kl8 = overviewData.kl8;
+  const f3d = overviewData.f3d;
   const activeDraws = overviewData[state.lottery];
   if (!activeDraws.length) return;
   const activeLatest = activeDraws[activeDraws.length - 1];
@@ -1583,12 +1587,19 @@ function renderOverview() {
     $('#overview-kl8-latest').textContent = kl8Numbers(latest).slice(0, 5).map((number) => String(number).padStart(2, '0')).join(' ');
     $('#overview-kl8-issue').textContent = `${latest.issue}期 · ${latest.kjdate}`;
   }
+  if (f3d.length) {
+    const latest = f3d[f3d.length - 1];
+    $('#overview-f3d-latest').textContent = drawDigits(latest, 3).join(' ');
+    $('#overview-f3d-issue').textContent = `${latest.issue}期 · ${latest.kjdate}`;
+  }
   $('#overview-pl3-latest').closest('div').classList.toggle('active', state.lottery === 'pl3');
   $('#overview-pl5-latest').closest('div').classList.toggle('active', state.lottery === 'pl5');
   $('#overview-kl8-latest').closest('div').classList.toggle('active', state.lottery === 'kl8');
+  $('#overview-f3d-latest').closest('div').classList.toggle('active', state.lottery === 'f3d');
   $('#overview-pl3-card').hidden = state.lottery !== 'pl3';
   $('#overview-pl5-card').hidden = state.lottery !== 'pl5';
   $('#overview-kl8-card').hidden = state.lottery !== 'kl8';
+  $('#overview-f3d-card').hidden = state.lottery !== 'f3d';
   $('.overview-latest').classList.add('single-latest');
   $('#overview-title').textContent = `${lotteryName()}今日研判`;
   $('#overview-lottery-badge').textContent = lotteryName();
@@ -1601,7 +1612,7 @@ function renderOverview() {
     return;
   }
   if (state.view !== 'overview') return;
-  $('#open-pl3-route').textContent = state.lottery === 'pl3' ? '查看012直选图' : '查看012走势图';
+  $('#open-pl3-route').textContent = isThreeDigitLottery() ? '查看012直选图' : '查看012走势图';
   const key = `${state.lottery}:${activeLatest.issue}`;
   if (overviewAnalysisKey === key) return;
   overviewAnalysisKey = key;
@@ -1612,7 +1623,7 @@ function renderOverview() {
       return;
     }
     buildDailyOverview(activeDraws, state.lottery);
-    if (state.lottery === 'pl3') renderPl3OverviewFocus(activeDraws);
+    if (isThreeDigitLottery()) renderPl3OverviewFocus(activeDraws);
     else renderPl5OverviewFocus(activeDraws);
   };
   requestAnimationFrame(() => {
@@ -1623,7 +1634,7 @@ function renderOverview() {
 
 async function loadOverviewData(refresh = false) {
   renderOverview();
-  const missing = ['pl3', 'pl5', 'kl8'].filter((lottery) => lottery !== state.lottery && (refresh || !overviewData[lottery].length));
+  const missing = ['pl3', 'pl5', 'kl8', 'f3d'].filter((lottery) => lottery !== state.lottery && (refresh || !overviewData[lottery].length));
   missing.forEach(async (lottery) => {
     try {
       const response = await fetch(`/api/draws?lottery=${lottery}&limit=${BOOTSTRAP_LIMIT}${refresh ? '&refresh=1' : ''}`);
@@ -1695,7 +1706,7 @@ function renderReviewRows(entries) {
   const weights = recentWindowWeights().map((weight) => `${Math.round(weight * 100)}%`).join('/');
   $('#review-summary').innerHTML = `<strong>${lotteryName()}复盘判断：</strong>${reviewDirection(entries)} <b>下一期30/50/100期权重：${weights}。</b> ${adaptiveDirections[state.lottery]}`;
   const mark = (number, hit) => `<span class="review-number ${hit ? 'hit-number' : ''}">${number}</span>`;
-  const labelOf = (lottery) => lottery === 'pl3' ? '排列三' : lottery === 'kl8' ? '快乐8' : '排列五';
+  const labelOf = (lottery) => lottery === 'pl3' ? '排列三' : lottery === 'f3d' ? '福彩3D' : lottery === 'kl8' ? '快乐8' : '排列五';
   const rows = entries.flatMap((entry) => {
     const recommendations = entry.recommendations || [];
     const outcomeByKey = new Map((entry.outcome?.results || []).map((result) => [result.key, result]));
@@ -1910,7 +1921,7 @@ function updateTicketCalculator() {
     ? `${probabilitySummary.hits}/${probabilitySummary.total} · ${formatProbability(probabilitySummary.rate)}` : '--';
   $('#calc-waiting').textContent = theoreticalProbability
     ? `约${Math.ceil(1 / theoreticalProbability).toLocaleString()}期` : '--';
-  $('#calc-prize').textContent = `${((state.lottery === 'pl3' ? 1040 : 100000) * multiple).toLocaleString()}元`;
+  $('#calc-prize').textContent = `${((isThreeDigitLottery() ? 1040 : 100000) * multiple).toLocaleString()}元`;
   $('#budget-hint').textContent = `当前预算最多可买${Math.floor(budget / (2 * multiple)).toLocaleString()}注（${multiple}倍）`;
   const generatedDan = selectorState.mode === 'dantuo' && selectorState.generatedTickets.length;
   $('#ticket-notation').textContent = totals.complete ? (selectorState.mode === 'filter' ? '条件缩水' : generatedDan ? '胆码机选' : notation) : '--';
@@ -2194,7 +2205,7 @@ async function switchLottery(lottery) {
   selectorState.filters.consecutive = 'any';
   document.querySelectorAll('[data-lottery]').forEach((button) => button.classList.toggle('active', button.dataset.lottery === lottery));
   document.querySelectorAll('.nav-item').forEach((button) => { button.hidden = isHappy8() && !['overview', 'review'].includes(button.dataset.view); });
-  $('#brand-mark').textContent = lottery === 'pl3' ? '3' : lottery === 'kl8' ? '8' : '5';
+  $('#brand-mark').textContent = isThreeDigitLottery(lottery) ? '3' : lottery === 'kl8' ? '8' : '5';
   document.title = `${lotteryName()}研判台`;
   $('#sum-min').max = digitCount() * 9;
   $('#sum-max').max = digitCount() * 9;
@@ -2219,9 +2230,9 @@ async function useOverviewPick(key) {
 }
 
 function copyDailySingles() {
-  const tickets = overviewRecommendations.pl3.singles;
+  const tickets = overviewRecommendations[state.lottery].singles;
   if (!tickets.length) return;
-  const text = `排列三单式直选 ${tickets.join(' ')} · 共${tickets.length}注${tickets.length * 2}元`;
+  const text = `${lotteryName()}单式直选 ${tickets.join(' ')} · 共${tickets.length}注${tickets.length * 2}元`;
   const fallback = () => { const area = document.createElement('textarea'); area.value = text; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); };
   if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(fallback);
   else fallback();
@@ -2229,7 +2240,7 @@ function copyDailySingles() {
 }
 
 function openOverviewRoute() {
-  state.mode = state.lottery === 'pl3' ? 'route-direct' : 'route-main';
+  state.mode = isThreeDigitLottery() ? 'route-direct' : 'route-main';
   buildMenu();
   showView('trend');
   renderTrend();
