@@ -1745,6 +1745,7 @@ function renderReviewRows(entries) {
   $('#review-summary').innerHTML = `<strong>${lotteryName()}复盘判断：</strong>${reviewDirection(entries)} <b>下一期30/50/100期权重：${weights}。</b>`;
   const mark = (number, hit) => `<span class="review-number ${hit ? 'hit-number' : ''}">${number}</span>`;
   const labelOf = (lottery) => lottery === 'pl3' ? '排列三' : lottery === 'f3d' ? '福彩3D' : lottery === 'kl8' ? '快乐8' : '排列五';
+  const positionLabels = (lottery) => lottery === 'pl5' ? ['万', '千', '百', '十', '个'] : ['百', '十', '个'];
   const cards = entries.map((entry) => {
     const recommendations = entry.recommendations || [];
     const outcomeByKey = new Map((entry.outcome?.results || []).map((result) => [result.key, result]));
@@ -1757,13 +1758,13 @@ function renderReviewRows(entries) {
       const outcome = outcomeByKey.get(recommendation.key);
       let code = '';
       if (recommendation.type === 'set') {
-        const hits = new Set(outcome?.hitNumbers || []); code = recommendation.picks.map((number) => mark(number, hits.has(number))).join(' ');
+        const hits = new Set(outcome?.hitNumbers || []); code = recommendation.picks.map((number) => `<span class="review-pick">${mark(number, hits.has(number))}</span>`).join('');
       } else if (recommendation.type === 'tickets') {
-        code = recommendation.tickets.map((number) => [...number].map((digit, position) => mark(digit, digit === actual[position])).join('')).join(' ');
+        code = recommendation.tickets.map((number) => `<span class="review-ticket">${[...number].map((digit, position) => mark(digit, digit === actual[position])).join('')}</span>`).join('');
       } else if (recommendation.type === 'group6') {
-        const hits = new Set(outcome?.hitNumbers || []); code = recommendation.picks.map((number) => mark(number, hits.has(number))).join(' ');
+        const hits = new Set(outcome?.hitNumbers || []); code = recommendation.picks.map((number) => `<span class="review-pick">${mark(number, hits.has(number))}</span>`).join('');
       } else {
-        code = recommendation.picks.map((picks, position) => [...String(picks)].map((digit) => mark(digit, digit === actual[position])).join('')).join('<i class="review-separator">-</i>');
+        code = recommendation.picks.map((picks, position) => `<span class="review-position"><small>${positionLabels(entry.lottery)[position] || position + 1}位</small><b>${[...String(picks)].map((digit) => mark(digit, digit === actual[position])).join('')}</b></span>`).join('');
       }
       const validation = recommendation.type === 'set' ? `平均${recommendation.validationHitAverage.toFixed(2)}个 · 覆盖 ${(recommendation.validationPositionRate * 100).toFixed(1)}%` : recommendation.type === 'group6' ? '6码组选 · 20组' : recommendation.type === 'tickets' ? `覆盖${recommendation.tickets.length}注` : `整注 ${(recommendation.validationRate * 100).toFixed(1)}% · 分位 ${(recommendation.validationPositionRate * 100).toFixed(1)}%`;
       let verdict = '<span class="review-status pending">等待核对</span>';
@@ -1781,16 +1782,23 @@ function renderReviewRows(entries) {
 }
 
 async function renderReview() {
-  $('#review-summary').textContent = '正在核对历史推荐与最新开奖...';
+  const lottery = state.lottery;
+  const local = readLocalReviewHistory().filter((entry) => entry.lottery === lottery)
+    .sort((a, b) => Number(b.sourceIssue) - Number(a.sourceIssue) || String(b.createdAt).localeCompare(String(a.createdAt)));
+  if (local.length) renderReviewRows(local);
+  else $('#review-summary').textContent = '正在读取已保存的推荐记录...';
+  const remote = fetch(`/api/recommendations?lottery=${lottery}&refresh=1`)
+    .then((response) => response.json())
+    .then((result) => {
+      if (state.lottery !== lottery) return;
+      applyReviewAdaptation(lottery, result.adaptation);
+      renderReviewRows(mergeReviewEntries(result.data || []).filter((entry) => entry.lottery === lottery));
+    });
   try {
-    await backfillPreviousReview(state.lottery);
-    await syncReviewEntries(state.lottery);
-    const response = await fetch(`/api/recommendations?lottery=${state.lottery}&refresh=1`);
-    const result = await response.json();
-    applyReviewAdaptation(state.lottery, result.adaptation);
-    renderReviewRows(mergeReviewEntries(result.data || []).filter((entry) => entry.lottery === state.lottery));
+    await backfillPreviousReview(lottery);
+    await syncReviewEntries(lottery);
+    await remote;
   } catch (_) {
-    const local = readLocalReviewHistory().filter((entry) => entry.lottery === state.lottery);
     if (local.length) renderReviewRows(local);
     else $('#review-summary').textContent = '复盘记录读取失败，请稍后刷新。';
   }

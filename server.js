@@ -396,8 +396,10 @@ const server = http.createServer(async (request, response) => {
         await writeRecommendationHistory(history);
       }
       if (!summaryOnly) {
-        const [pl3, pl5, kl8, f3d] = await Promise.all([getDraws('pl3', refresh), getDraws('pl5', refresh), getDraws('kl8', refresh), getDraws('f3d', refresh)]);
-        if (settleRecommendationHistory(history, { pl3, pl5, kl8, f3d })) await writeRecommendationHistory(history);
+        const lotteries = ['pl3', 'pl5', 'kl8', 'f3d'];
+        const targets = lotteries.includes(lottery) ? [lottery] : lotteries;
+        const drawsByLottery = Object.fromEntries(await Promise.all(targets.map(async (key) => [key, await getDraws(key, refresh)])));
+        if (settleRecommendationHistory(history, drawsByLottery)) await writeRecommendationHistory(history);
       }
       const entries = history.filter((entry) => !lottery || entry.lottery === lottery)
         .sort((a, b) => Number(b.sourceIssue) - Number(a.sourceIssue) || String(b.createdAt).localeCompare(String(a.createdAt)));
