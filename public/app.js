@@ -1742,18 +1742,18 @@ function reviewDirection(entries) {
 
 function renderReviewRows(entries) {
   const weights = recentWindowWeights().map((weight) => `${Math.round(weight * 100)}%`).join('/');
-  $('#review-summary').innerHTML = `<strong>${lotteryName()}复盘判断：</strong>${reviewDirection(entries)} <b>下一期30/50/100期权重：${weights}。</b> ${adaptiveDirections[state.lottery]}`;
+  $('#review-summary').innerHTML = `<strong>${lotteryName()}复盘判断：</strong>${reviewDirection(entries)} <b>下一期30/50/100期权重：${weights}。</b>`;
   const mark = (number, hit) => `<span class="review-number ${hit ? 'hit-number' : ''}">${number}</span>`;
   const labelOf = (lottery) => lottery === 'pl3' ? '排列三' : lottery === 'f3d' ? '福彩3D' : lottery === 'kl8' ? '快乐8' : '排列五';
-  const rows = entries.flatMap((entry) => {
+  const cards = entries.map((entry) => {
     const recommendations = entry.recommendations || [];
     const outcomeByKey = new Map((entry.outcome?.results || []).map((result) => [result.key, result]));
     const actual = entry.outcome?.actual || '';
     const actualDisplay = entry.lottery === 'kl8' ? (actual.match(/\d{2}/g) || []).join(' ') : [...actual].join(' ');
     const actualCell = entry.status === 'settled'
-      ? `<div class="review-result"><strong>${entry.outcome.targetIssue}期</strong><b>${actualDisplay}</b><small>${entry.outcome.targetDate}</small></div>`
-      : `<span class="review-status pending">待下一期开奖<small>方案基于${entry.sourceIssue}期</small></span>`;
-    return recommendations.map((recommendation, index) => {
+      ? `<div class="review-day-result"><span>开奖 ${entry.outcome.targetIssue}期</span><b>${actualDisplay}</b><small>${entry.outcome.targetDate}</small></div>`
+      : `<div class="review-day-result pending"><span>待下一期开奖</span><small>方案基于 ${entry.sourceIssue} 期</small></div>`;
+    const lines = recommendations.map((recommendation) => {
       const outcome = outcomeByKey.get(recommendation.key);
       let code = '';
       if (recommendation.type === 'set') {
@@ -1773,12 +1773,11 @@ function renderReviewRows(entries) {
         else if (recommendation.type === 'group6') verdict = `<div class="review-status ${outcome.fullHit ? 'hit' : 'miss'}">${outcome.fullHit ? '组选命中' : '未中'}<small>六码命中 ${outcome.positionHitCount}/6 · ${(outcome.positionHitCount / 6 * 100).toFixed(1)}%</small></div>`;
         else verdict = `<div class="review-status ${outcome.fullHit ? 'hit' : 'miss'}">${outcome.fullHit ? '整注命中' : '未中'}<small>分位命中 ${outcome.positionHitCount}/${recommendation.positionCount} · ${(outcome.positionHitCount / recommendation.positionCount * 100).toFixed(1)}%</small></div>`;
       }
-      const shared = index === 0 ? `<td rowspan="${recommendations.length}">${entry.sourceDate || entry.date}${entry.replay ? '<br><small>补档回放</small>' : ''}</td><td rowspan="${recommendations.length}">${labelOf(entry.lottery)}</td><td rowspan="${recommendations.length}">${entry.sourceIssue}期<br><small>${entry.sourceDate}</small></td>` : '';
-      const resultShared = index === 0 ? `<td rowspan="${recommendations.length}">${actualCell}</td>` : '';
-      return `<tr class="review-play-row">${shared}<td class="review-play"><strong>${recommendation.label}</strong><small>${recommendation.cost ? `${recommendation.cost}元` : '统计参考'}</small></td><td class="review-code">${code}</td><td class="review-validation">${validation}</td>${resultShared}<td>${verdict}</td></tr>`;
-    });
+      return `<article class="review-line"><div class="review-play"><strong>${recommendation.label}</strong><small>${recommendation.cost ? `${recommendation.cost}元` : '统计参考'}</small></div><div class="review-code">${code}</div><div class="review-validation">${validation}</div><div class="review-verdict">${verdict}</div></article>`;
+    }).join('');
+    return `<section class="review-day ${entry.status === 'settled' ? 'settled' : 'pending'}"><header class="review-day-header"><div class="review-day-meta"><time>${entry.sourceDate || entry.date}</time><span class="review-lottery-tag">${labelOf(entry.lottery)}</span><span>数据截至 ${entry.sourceIssue}期</span>${entry.replay ? '<span class="review-replay">补档回放</span>' : ''}</div>${actualCell}</header><div class="review-lines">${lines}</div></section>`;
   });
-  $('#review-body').innerHTML = rows.length ? rows.join('') : '<tr><td colspan="8">暂无保存的推荐。打开研判主板后，今日方案会自动归档。</td></tr>';
+  $('#review-body').innerHTML = cards.length ? cards.join('') : '<div class="review-empty">暂无保存的推荐。打开研判主板后，今日方案会自动归档。</div>';
 }
 
 async function renderReview() {
