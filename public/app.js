@@ -487,32 +487,20 @@ function routeOmissionCompound(draws, lottery, routePattern) {
       omit: currentOmission(draws, (draw) => drawDigits(draw, count)[position], digit)
     })).filter((item) => item.digit % 3 === Number(route))
       .sort((a, b) => b.omit - a.omit || a.digit - b.digit)
-      .slice(0, 2).map((item) => item.digit).sort((a, b) => a - b));
-}
-
-function routeOmissionTickets(draws, lottery, routePattern, count) {
-  const positionCount = isThreeDigitLottery(lottery) ? 3 : 5;
-  const picks = routeOmissionCompound(draws, lottery, routePattern);
-  const omissions = picks.map((positionPicks, position) => new Map(positionPicks.map((digit) => [
-    digit, currentOmission(draws, (draw) => drawDigits(draw, positionCount)[position], digit)
-  ])));
-  let tickets = [{ code: '', score: 0 }];
-  picks.forEach((positionPicks, position) => {
-    tickets = tickets.flatMap((ticket) => positionPicks.map((digit) => ({
-      code: `${ticket.code}${digit}`,
-      score: ticket.score + omissions[position].get(digit)
-    })));
-  });
-  return { picks, tickets: tickets.sort((a, b) => b.score - a.score || a.code.localeCompare(b.code)).slice(0, count).map((item) => item.code) };
+      .slice(0, 2).map((item) => item.digit));
 }
 
 function routeFocusRows(items, draws, lottery) {
   const count = isThreeDigitLottery(lottery) ? 3 : 5;
-  const budgetCounts = count === 3 ? [1, 2, 4] : [1, 2, 4, 8, 16];
+  const prices = count === 3 ? [2, 4, 8] : [2, 4, 8, 16, 32];
   return items.map((item) => {
-    const recommendation = routeOmissionTickets(draws, lottery, item.label, budgetCounts.at(-1));
-    const budgets = budgetCounts.map((ticketCount) => `<span><b>${ticketCount * 2}元</b>${recommendation.tickets.slice(0, ticketCount).join(' ')}</span>`).join('');
-    return `<div class="focus-route-row"><div><b>${item.label}路</b><span>当前遗漏 <em>${item.omit}</em> 期</span></div><code>复式 ${recommendation.picks.map((list) => list.join('')).join('-')} · ${2 ** count}注</code><div class="focus-route-budgets">${budgets}</div></div>`;
+    const picks = routeOmissionCompound(draws, lottery, item.label);
+    const budgets = prices.map((price, index) => {
+      const expandedPositions = index;
+      const notation = picks.map((positionPicks, position) => position < expandedPositions ? positionPicks.join('') : positionPicks[0]).join('-');
+      return `<span><b>${price}元</b>${notation}</span>`;
+    }).join('');
+    return `<div class="focus-route-row"><div><b>${item.label}路</b><span>当前遗漏 <em>${item.omit}</em> 期</span></div><code>全复式 ${picks.map((list) => list.join('')).join('-')} · ${2 ** count}注 · ${2 ** (count + 1)}元</code><div class="focus-route-budgets">${budgets}</div></div>`;
   }).join('');
 }
 
