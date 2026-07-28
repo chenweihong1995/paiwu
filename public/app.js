@@ -6,7 +6,7 @@ const scheduledCalibrations = new Set();
 let overviewAnalysisTimer = null;
 let overviewAnalysisKey = '';
 let pl3SingleFocusKey = '';
-const overviewRecommendations = { pl3: { wide: [], narrow: [], omit: [], singles: [] }, pl5: { wide: [], narrow: [], omit: [] }, kl8: { ten: [], twelve: [] }, f3d: { wide: [], narrow: [], omit: [], singles: [] } };
+const overviewRecommendations = { pl3: { wide: [], narrow: [], singles: [] }, pl5: { wide: [], narrow: [] }, kl8: { ten: [], twelve: [] }, f3d: { wide: [], narrow: [], singles: [] } };
 const algorithmCaches = { pl3: null, pl5: null, f3d: null };
 const savedDailySnapshots = new Set();
 const LOCAL_REVIEW_HISTORY_KEY = 'lottery-recommendation-history-v1';
@@ -480,34 +480,23 @@ function rankedOmissions(draws, categories, value, limit) {
     .slice(0, limit);
 }
 
-function highOmissionCompound(draws, lottery) {
+function routeOmissionCompound(draws, lottery, routePattern) {
   const count = isThreeDigitLottery(lottery) ? 3 : 5;
-  const routePatterns = count === 3 ? directRoutes : pl5DirectRoutes;
-  const routeFocus = rankedOmissions(draws, routePatterns, (draw) => drawDigits(draw, count).map((digit) => digit % 3).join(''), 12);
-  const routeScores = Array.from({ length: count }, () => [0, 0, 0]);
-  routeFocus.forEach((item, rank) => {
-    [...item.label].forEach((route, position) => { routeScores[position][Number(route)] += routeFocus.length - rank; });
-  });
-  const picks = Array.from({ length: count }, (_, position) => {
-    const omitted = Array.from({ length: 10 }, (_, digit) => ({
+  return [...String(routePattern)].slice(0, count).map((route, position) => Array.from({ length: 10 }, (_, digit) => ({
       digit,
       omit: currentOmission(draws, (draw) => drawDigits(draw, count)[position], digit)
-    })).sort((a, b) => b.omit - a.omit || a.digit - b.digit);
-    const omitRank = new Map(omitted.map((item, rank) => [item.digit, 10 - rank]));
-    const maxRouteScore = Math.max(...routeScores[position], 1);
-    return omitted.map((item) => ({
-      ...item,
-      score: omitRank.get(item.digit) + routeScores[position][item.digit % 3] / maxRouteScore
-    })).sort((a, b) => b.score - a.score || b.omit - a.omit || a.digit - b.digit).slice(0, 2).map((item) => item.digit).sort((a, b) => a - b);
-  });
-  const coveredRoutes = new Set(['']);
-  picks.forEach((positionPicks) => {
-    const next = new Set();
-    coveredRoutes.forEach((prefix) => positionPicks.forEach((digit) => next.add(`${prefix}${digit % 3}`)));
-    coveredRoutes.clear(); next.forEach((route) => coveredRoutes.add(route));
-  });
-  const priorityRoutes = routeFocus.filter((item) => coveredRoutes.has(item.label)).slice(0, 3).map((item) => item.label);
-  return { picks, priorityRoutes, routeFocus };
+    })).filter((item) => item.digit % 3 === Number(route))
+      .sort((a, b) => b.omit - a.omit || a.digit - b.digit)
+      .slice(0, 2).map((item) => item.digit).sort((a, b) => a - b));
+}
+
+function routeFocusRows(items, draws, lottery) {
+  const count = isThreeDigitLottery(lottery) ? 3 : 5;
+  const bets = 2 ** count;
+  return items.map((item) => {
+    const picks = routeOmissionCompound(draws, lottery, item.label);
+    return `<div class="focus-route-row"><div><b>${item.label}路</b><span>当前遗漏 <em>${item.omit}</em> 期</span></div><code>${picks.map((list) => list.join('')).join('-')}</code><small>${bets}注 · 严格${item.label}路</small></div>`;
+  }).join('');
 }
 
 function patternList(symbols, count) {
@@ -1178,13 +1167,11 @@ function buildDailyOverview(draws, lottery) {
   const isPl3 = isThreeDigitLottery(lottery);
   const names = isPl3 ? ['百位', '十位', '个位'] : ['万位', '千位', '百位', '十位', '个位'];
   const { widePlan, narrowPlan, wideCount, narrowCount } = archivedRecommendationPlans(draws, lottery);
-  const omitCompound = highOmissionCompound(draws, lottery);
   const trendEntries = trendProjectionEntries(draws, lottery);
   const trendByPosition = new Map(trendEntries.map((entry) => [entry.position, entry]));
   const trendSummary = trendEntries.length ? ` · 图形延长候选：${trendEntries.map((entry) => `${names[entry.position]}${entry.digit}`).join('、')}；其余位置按模型` : '';
   overviewRecommendations[lottery].wide = widePlan.picks;
   overviewRecommendations[lottery].narrow = narrowPlan.picks;
-  overviewRecommendations[lottery].omit = omitCompound.picks;
   const singleTickets = isPl3 ? pl3SingleTickets(narrowPlan) : [];
   let groupTickets = {};
   overviewRecommendations[lottery].singles = singleTickets;
@@ -1202,11 +1189,6 @@ function buildDailyOverview(draws, lottery) {
   $('#daily-three-note').textContent = `整注命中 ${(narrowPlan.validationRate * 100).toFixed(1)}% · 分位覆盖 ${(narrowPlan.validationPositionRate * 100).toFixed(1)}% · 理论 ${(narrowPlan.baseline * 100).toFixed(1)}%${trendSummary}`;
   $('#daily-six-meta').textContent = `命中${widePlan.validationHits}/${widePlan.validationSize}期 · ${wideBets * 2}元`;
   $('#daily-three-meta').textContent = `命中${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${narrowBets * 2}元`;
-  const omitBets = 2 ** names.length;
-  $('#daily-omit-title').textContent = `高遗漏2×2${names.length === 5 ? '×2×2×2' : '×2'}复式`;
-  $('#daily-omit-meta').textContent = `${omitBets}注 · ${omitBets * 2}元`;
-  $('#daily-omit-code').textContent = omitCompound.picks.map((list) => list.join('')).join('-');
-  $('#daily-omit-note').textContent = `分位高遗漏优先${omitCompound.priorityRoutes.length ? ` · 覆盖高遗漏${omitCompound.priorityRoutes.join('、')}路` : ' · 012形态作平衡'}`;
   const lift = narrowPlan.validationPositionLift * 100;
   const liftLabel = `${lift >= 0 ? '+' : ''}${lift.toFixed(1)}个百分点`;
   $('#algorithm-summary').textContent = `近30/50/100期按${recentWeightLabel(lottery)}评分；${adaptiveDirections[lottery]}；${narrowPlan.strategyDecision}；后${narrowPlan.validationSize}期完全留出验证`;
@@ -1583,7 +1565,7 @@ function renderPl3OverviewFocus(pl3) {
   $('#focus-wide-meta').textContent = '近30期识别';
   const directFocus = rankedOmissions(pl3, directRoutes, (draw) => drawDigits(draw, 3).map((digit) => digit % 3).join(''), 5)
     .map((item) => ({ ...item, label: `${item.label}路` }));
-  $('#focus-route').innerHTML = focusRows(directFocus);
+  $('#focus-route').innerHTML = routeFocusRows(directFocus.map((item) => ({ ...item, label: item.label.replace('路', '') })), pl3, 'pl3');
   const names = ['百位', '十位', '个位'];
   $('#focus-position').innerHTML = focusRows(names.flatMap((name, position) => rankedOmissions(pl3, Array.from({ length: 10 }, (_, digit) => digit), (draw) => drawDigits(draw, 3)[position], 2)
     .map((item) => ({ ...item, label: `${name} ${item.label}` }))));
@@ -1617,7 +1599,7 @@ function renderPl5OverviewFocus(pl5) {
   $('#focus-wide-meta').textContent = '近30期识别';
   const routeFocus = rankedOmissions(pl5, pl5DirectRoutes, (draw) => drawDigits(draw, 5).map((digit) => digit % 3).join(''), 5)
     .map((item) => ({ ...item, label: `${item.label}路` }));
-  $('#focus-route').innerHTML = focusRows(routeFocus);
+  $('#focus-route').innerHTML = routeFocusRows(routeFocus.map((item) => ({ ...item, label: item.label.replace('路', '') })), pl5, 'pl5');
   const names = ['万位', '千位', '百位', '十位', '个位'];
   $('#focus-position').innerHTML = focusRows(names.flatMap((name, position) => rankedOmissions(pl5, Array.from({ length: 10 }, (_, digit) => digit), (draw) => drawDigits(draw, 5)[position], 2)
     .map((item) => ({ ...item, label: `${name} ${item.label}` }))));
