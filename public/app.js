@@ -490,12 +490,29 @@ function routeOmissionCompound(draws, lottery, routePattern) {
       .slice(0, 2).map((item) => item.digit).sort((a, b) => a - b));
 }
 
+function routeOmissionTickets(draws, lottery, routePattern, count) {
+  const positionCount = isThreeDigitLottery(lottery) ? 3 : 5;
+  const picks = routeOmissionCompound(draws, lottery, routePattern);
+  const omissions = picks.map((positionPicks, position) => new Map(positionPicks.map((digit) => [
+    digit, currentOmission(draws, (draw) => drawDigits(draw, positionCount)[position], digit)
+  ])));
+  let tickets = [{ code: '', score: 0 }];
+  picks.forEach((positionPicks, position) => {
+    tickets = tickets.flatMap((ticket) => positionPicks.map((digit) => ({
+      code: `${ticket.code}${digit}`,
+      score: ticket.score + omissions[position].get(digit)
+    })));
+  });
+  return { picks, tickets: tickets.sort((a, b) => b.score - a.score || a.code.localeCompare(b.code)).slice(0, count).map((item) => item.code) };
+}
+
 function routeFocusRows(items, draws, lottery) {
   const count = isThreeDigitLottery(lottery) ? 3 : 5;
-  const bets = 2 ** count;
+  const budgetCounts = count === 3 ? [1, 2, 4] : [1, 2, 4, 8, 16];
   return items.map((item) => {
-    const picks = routeOmissionCompound(draws, lottery, item.label);
-    return `<div class="focus-route-row"><div><b>${item.label}路</b><span>当前遗漏 <em>${item.omit}</em> 期</span></div><code>${picks.map((list) => list.join('')).join('-')}</code><small>${bets}注 · 严格${item.label}路</small></div>`;
+    const recommendation = routeOmissionTickets(draws, lottery, item.label, budgetCounts.at(-1));
+    const budgets = budgetCounts.map((ticketCount) => `<span><b>${ticketCount * 2}元</b>${recommendation.tickets.slice(0, ticketCount).join(' ')}</span>`).join('');
+    return `<div class="focus-route-row"><div><b>${item.label}路</b><span>当前遗漏 <em>${item.omit}</em> 期</span></div><code>复式 ${recommendation.picks.map((list) => list.join('')).join('-')} · ${2 ** count}注</code><div class="focus-route-budgets">${budgets}</div></div>`;
   }).join('');
 }
 
@@ -1181,8 +1198,6 @@ function buildDailyOverview(draws, lottery) {
   const singleTickets = isPl3 ? pl3SingleTickets(narrowPlan) : [];
   let groupTickets = {};
   overviewRecommendations[lottery].singles = singleTickets;
-  const budgetTicketCounts = isPl3 ? [1, 2, 4] : [1, 2, 4, 8, 16];
-  const budgetTickets = rankedSingleTickets(narrowPlan, budgetTicketCounts.at(-1), isPl3 ? 5 : 6);
   const aggregate = Array.from({ length: 10 }, (_, digit) => ({
     digit,
     score: narrowPlan.rankings.reduce((total, ranking) => total + (10 - ranking.indexOf(digit)), 0)
@@ -1197,11 +1212,6 @@ function buildDailyOverview(draws, lottery) {
   $('#daily-three-note').textContent = `整注命中 ${(narrowPlan.validationRate * 100).toFixed(1)}% · 分位覆盖 ${(narrowPlan.validationPositionRate * 100).toFixed(1)}% · 理论 ${(narrowPlan.baseline * 100).toFixed(1)}%${trendSummary}`;
   $('#daily-six-meta').textContent = `命中${widePlan.validationHits}/${widePlan.validationSize}期 · ${wideBets * 2}元`;
   $('#daily-three-meta').textContent = `命中${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${narrowBets * 2}元`;
-  $('#daily-budget-note').textContent = `${isPl3 ? '2 / 4 / 8元' : '2 / 4 / 8 / 16 / 32元'}，高档包含低档号码`;
-  $('#daily-budget-options').innerHTML = budgetTicketCounts.map((ticketCount) => {
-    const cost = ticketCount * 2;
-    return `<div class="budget-option"><span>${cost}元</span><b>${budgetTickets.slice(0, ticketCount).join(' ')}</b><small>${ticketCount}注 · 直选单式</small></div>`;
-  }).join('');
   const lift = narrowPlan.validationPositionLift * 100;
   const liftLabel = `${lift >= 0 ? '+' : ''}${lift.toFixed(1)}个百分点`;
   $('#algorithm-summary').textContent = `近30/50/100期按${recentWeightLabel(lottery)}评分；${adaptiveDirections[lottery]}；${narrowPlan.strategyDecision}；后${narrowPlan.validationSize}期完全留出验证`;
