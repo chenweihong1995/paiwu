@@ -113,11 +113,11 @@ function mergeDrawSets(current, incoming) {
 }
 
 function scheduleLotteryCalibration(lottery) {
-  if (lottery !== 'pl5' || scheduledCalibrations.has(lottery)) return;
+  if (!['pl3', 'pl5', 'f3d'].includes(lottery) || scheduledCalibrations.has(lottery)) return;
   scheduledCalibrations.add(lottery);
   setTimeout(async () => {
     try {
-      const response = await fetch(`/api/draws?lottery=${lottery}&limit=${BOOTSTRAP_LIMIT}&calibrate=${Date.now()}`);
+      const response = await fetch(`/api/draws?lottery=${lottery}&limit=${BOOTSTRAP_LIMIT}&refresh=1&calibrate=${Date.now()}`);
       const result = await response.json();
       overviewData[lottery] = preferNewestDraws(overviewData[lottery], result.data);
       lotteryTotals[lottery] = Math.max(lotteryTotals[lottery], result.total);

@@ -17,6 +17,7 @@ const DATA_URLS = {
   kl8: 'https://tb.tuganjue.com/api/kl8/getTbList?action=kjfb&page=1&limit=10000&orderby=asc&start_issue=0&end_issue=0&week=all',
   f3d: 'https://tb.tuganjue.com/f3d/php/kjfb.php?mobile=2&client=&ref='
 };
+const DRAW_CACHE_TTL = 60 * 1000;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -52,7 +53,12 @@ function readSnapshot(lottery) {
 function fetchRemote(lottery, requestedLimit = 1000) {
   if (lottery === 'f3d') return fetchF3dRemote(requestedLimit);
   return new Promise((resolve, reject) => {
-    const request = https.get(DATA_URLS[lottery], { timeout: 12000 }, (response) => {
+    const source = new URL(DATA_URLS[lottery]);
+    source.searchParams.set('_ts', String(Date.now()));
+    const request = https.get(source, {
+      timeout: 12000,
+      headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache', 'User-Agent': 'PaiwuTrendLab/1.0' }
+    }, (response) => {
       if (response.statusCode !== 200) {
         response.resume();
         reject(new Error(`HTTP ${response.statusCode}`));
@@ -77,9 +83,11 @@ function fetchRemote(lottery, requestedLimit = 1000) {
 
 async function fetchF3dRemote(requestedLimit = 1000) {
   const pageSize = Math.min(10000, Math.max(1000, Number(requestedLimit) || 1000));
-  const response = await fetch(DATA_URLS.f3d, {
+  const source = new URL(DATA_URLS.f3d);
+  source.searchParams.set('_ts', String(Date.now()));
+  const response = await fetch(source, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
     body: `from=&to=&week=all&pagesize=${pageSize}&page=1&order=asc&date=1`,
     signal: AbortSignal.timeout(pageSize > 1000 ? 45000 : 12000)
   });
@@ -112,7 +120,7 @@ function refreshInBackground(lottery) {
 async function getDraws(lottery, force = false, requiredLimit = 0) {
   const requiredSize = lottery === 'f3d' ? Math.min(10000, Math.max(1000, Number(requiredLimit) || 1000)) : 0;
   const cacheIsEnough = caches[lottery]?.length && (lottery !== 'f3d' || caches[lottery].length >= requiredSize);
-  if (!force && cacheIsEnough && Date.now() - cacheTimes[lottery] < 10 * 60 * 1000) return caches[lottery];
+  if (!force && cacheIsEnough && Date.now() - cacheTimes[lottery] < DRAW_CACHE_TTL) return caches[lottery];
   const fallback = caches[lottery]?.length ? caches[lottery] : readSnapshot(lottery);
   const fallbackIsEnough = fallback.length && (lottery !== 'f3d' || fallback.length >= requiredSize);
   if (!force && fallbackIsEnough) {
