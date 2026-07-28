@@ -902,12 +902,18 @@ function pl5FrontWidePlan(draws) {
   return createExpandedPlan(backtest, selectBacktestedPlan(backtest, 2), 3);
 }
 
-function pl3SingleTickets(plan, count = 5) {
-  const candidates = [];
-  plan.rankings[0].slice(0, 5).forEach((a, ai) => plan.rankings[1].slice(0, 5).forEach((b, bi) => plan.rankings[2].slice(0, 5).forEach((c, ci) => {
-    candidates.push({ code: `${a}${b}${c}`, score: ai + bi + ci });
-  })));
+function rankedSingleTickets(plan, count, width = 5) {
+  let candidates = [{ code: '', score: 0 }];
+  plan.rankings.forEach((ranking) => {
+    candidates = candidates.flatMap((candidate) => ranking.slice(0, width).map((digit, rank) => ({
+      code: `${candidate.code}${digit}`, score: candidate.score + rank
+    })));
+  });
   return candidates.sort((a, b) => a.score - b.score || a.code.localeCompare(b.code)).slice(0, count).map((item) => item.code);
+}
+
+function pl3SingleTickets(plan, count = 5) {
+  return rankedSingleTickets(plan, count, 5);
 }
 
 function kl8Numbers(draw) {
@@ -1175,6 +1181,8 @@ function buildDailyOverview(draws, lottery) {
   const singleTickets = isPl3 ? pl3SingleTickets(narrowPlan) : [];
   let groupTickets = {};
   overviewRecommendations[lottery].singles = singleTickets;
+  const budgetTicketCounts = isPl3 ? [1, 2, 4] : [1, 2, 4, 8, 16];
+  const budgetTickets = rankedSingleTickets(narrowPlan, budgetTicketCounts.at(-1), isPl3 ? 5 : 6);
   const aggregate = Array.from({ length: 10 }, (_, digit) => ({
     digit,
     score: narrowPlan.rankings.reduce((total, ranking) => total + (10 - ranking.indexOf(digit)), 0)
@@ -1189,6 +1197,11 @@ function buildDailyOverview(draws, lottery) {
   $('#daily-three-note').textContent = `整注命中 ${(narrowPlan.validationRate * 100).toFixed(1)}% · 分位覆盖 ${(narrowPlan.validationPositionRate * 100).toFixed(1)}% · 理论 ${(narrowPlan.baseline * 100).toFixed(1)}%${trendSummary}`;
   $('#daily-six-meta').textContent = `命中${widePlan.validationHits}/${widePlan.validationSize}期 · ${wideBets * 2}元`;
   $('#daily-three-meta').textContent = `命中${narrowPlan.validationHits}/${narrowPlan.validationSize}期 · ${narrowBets * 2}元`;
+  $('#daily-budget-note').textContent = `${isPl3 ? '2 / 4 / 8元' : '2 / 4 / 8 / 16 / 32元'}，高档包含低档号码`;
+  $('#daily-budget-options').innerHTML = budgetTicketCounts.map((ticketCount) => {
+    const cost = ticketCount * 2;
+    return `<div class="budget-option"><span>${cost}元</span><b>${budgetTickets.slice(0, ticketCount).join(' ')}</b><small>${ticketCount}注 · 直选单式</small></div>`;
+  }).join('');
   const lift = narrowPlan.validationPositionLift * 100;
   const liftLabel = `${lift >= 0 ? '+' : ''}${lift.toFixed(1)}个百分点`;
   $('#algorithm-summary').textContent = `近30/50/100期按${recentWeightLabel(lottery)}评分；${adaptiveDirections[lottery]}；${narrowPlan.strategyDecision}；后${narrowPlan.validationSize}期完全留出验证`;
